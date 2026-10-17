@@ -3,11 +3,18 @@
 
   const STORAGE_KEY = 'redline-trading-journal:v1';
   const SETUP_STORAGE_KEY = 'redline-trading-journal:setups:v1';
+  const WORKSPACES_STORAGE_KEY = 'redline-trading-journal:workspaces:v1';
+  const ACTIVE_WORKSPACE_KEY = 'redline-trading-journal:active-workspace:v1';
+  const PROJECT_DATA_PREFIX = 'redline-trading-journal:project:v1:';
   const FUTURES = { GC: 100, MGC: 10, NQ: 20, MNQ: 2 };
   const DEFAULT_SETUPS = ['Breakout', 'Pullback', 'Reversal', 'Trend following', 'Range', 'อื่น ๆ'];
   const $ = (id) => document.getElementById(id);
-  let trades = loadTrades();
-  let setups = loadSetups();
+  let workspaces = loadWorkspaces();
+  if (!workspaces.length) workspaces = [{ id: 'journal-default', name: 'My Journal', tradeCount: loadTrades().length }];
+  let activeWorkspaceId = localStorage.getItem(ACTIVE_WORKSPACE_KEY) || workspaces[0].id;
+  if (!workspaces.some((workspace) => workspace.id === activeWorkspaceId)) activeWorkspaceId = workspaces[0].id;
+  let trades = loadWorkspaceTrades(activeWorkspaceId);
+  let setups = loadWorkspaceSetups(activeWorkspaceId);
   let demoMode = false;
   let editingSetupName = null;
   let pendingImages = [];
@@ -26,8 +33,161 @@
       return Array.isArray(saved) && saved.length ? [...new Set(saved.filter((item) => typeof item === 'string' && item.trim()))] : [...DEFAULT_SETUPS];
     } catch { return [...DEFAULT_SETUPS]; }
   }
-  function persist() { localStorage.setItem(STORAGE_KEY, JSON.stringify(trades)); }
-  function persistSetups() { localStorage.setItem(SETUP_STORAGE_KEY, JSON.stringify(setups)); }
+  function loadWorkspaces() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(WORKSPACES_STORAGE_KEY) || 'null');
+      if (!Array.isArray(saved)) return [];
+      return saved.filter((workspace) => workspace && typeof workspace.id === 'string' && typeof workspace.name === 'string').map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name.trim() || 'Untitled Project',
+        tradeCount: Number.isInteger(workspace.tradeCount) ? workspace.tradeCount : null
+      }));
+    } catch { return []; }
+  }
+  function projectDataKey(id, kind) {
+    if (id === 'journal-default') return kind === 'trades' ? STORAGE_KEY : SETUP_STORAGE_KEY;
+    return `${PROJECT_DATA_PREFIX}${encodeURIComponent(id)}:${kind}`;
+  }
+  function loadWorkspaceTrades(id) {
+    if (id === 'journal-default') return loadTrades();
+    try {
+      const saved = JSON.parse(localStorage.getItem(projectDataKey(id, 'trades')) || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch { return []; }
+  }
+  function loadWorkspaceSetups(id) {
+    if (id === 'journal-default') return loadSetups();
+    try {
+      const saved = JSON.parse(localStorage.getItem(projectDataKey(id, 'setups')) || 'null');
+      return Array.isArray(saved) && saved.length ? [...new Set(saved.filter((item) => typeof item === 'string' && item.trim()))] : [...DEFAULT_SETUPS];
+    } catch { return [...DEFAULT_SETUPS]; }
+  }
+  function persistWorkspaceState() {
+    const active = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+    if (active) {
+      localStorage.setItem(projectDataKey(activeWorkspaceId, 'trades'), JSON.stringify(trades));
+      localStorage.setItem(projectDataKey(activeWorkspaceId, 'setups'), JSON.stringify(setups));
+      active.tradeCount = trades.length;
+    }
+    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.map(({ id, name, tradeCount }) => ({ id, name, tradeCount }))));
+    localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
+  }
+  function persist() { persistWorkspaceState(); }
+  function persistSetups() { persistWorkspaceState(); }
+  if (!localStorage.getItem(WORKSPACES_STORAGE_KEY)) {
+    try {
+      localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.map(({ id, name, tradeCount }) => ({ id, name, tradeCount }))));
+      localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
+    } catch { /* Keep legacy records readable even if the browser cannot add workspace metadata yet. */ }
+  }
+  function activeWorkspace() { return workspaces.find((workspace) => workspace.id === activeWorkspaceId); }
+  function renderWorkspaceControls() {
+    const active = activeWorkspace();
+    $('workspaceSelect').innerHTML = workspaces.map((workspace) => `<option value="${escapeHtml(workspace.id)}">${escapeHtml(workspace.name)}</option>`).join('');
+    $('workspaceSelect').value = activeWorkspaceId;
+    $('activeWorkspaceLabel').textContent = active?.name || 'My Journal';
+    $('accountWorkspaceName').textContent = active?.name || 'My Journal';
+    $('accountWorkspaceSummary').textContent = `${trades.length} รายการเทรด`;
+    $('workspaceCount').textContent = `${workspaces.length} โปรเจกต์`;
+    $('workspaceRows').innerHTML = workspaces.map((workspace) => `<div class="workspace-row${workspace.id === activeWorkspaceId ? ' active' : ''}"><button type="button" class="workspace-row-select" data-select-workspace="${escapeHtml(workspace.id)}"><strong>${escapeHtml(workspace.name)}</strong><small>${workspace.id === activeWorkspaceId ? trades.length : (workspace.tradeCount ?? loadWorkspaceTrades(workspace.id).length)} รายการเทรด${workspace.id === activeWorkspaceId ? ' · กำลังใช้งาน' : ''}</small></button><div class="workspace-row-actions"><button type="button" data-rename-workspace="${escapeHtml(workspace.id)}">เปลี่ยนชื่อ</button>${workspaces.length > 1 ? `<button type="button" class="delete-setup" data-delete-workspace="${escapeHtml(workspace.id)}">ลบ</button>` : ''}</div></div>`).join('');
+  }
+  function switchWorkspace(id) {
+    if (!workspaces.some((workspace) => workspace.id === id) || id === activeWorkspaceId) return;
+    if (demoMode) {
+      demoMode = false;
+      $('demoBanner').hidden = true;
+      $('demoButtonLabel').textContent = 'ข้อมูลตัวอย่าง';
+      $('demoButton').classList.remove('demo-active');
+    }
+    activeWorkspaceId = id;
+    const active = activeWorkspace();
+    trades = loadWorkspaceTrades(activeWorkspaceId);
+    setups = loadWorkspaceSetups(activeWorkspaceId);
+    localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
+    $('searchTrades').value = '';
+    $('periodFilter').value = 'all';
+    $('instrumentFilter').value = 'all';
+    renderSetupOptions();
+    renderWorkspaceControls();
+    render();
+    toast(`เปิดโปรเจกต์ “${active.name}” แล้ว`);
+  }
+  function closeWorkspaceManager() {
+    $('workspaceManager').classList.remove('open');
+    $('workspaceManager').setAttribute('aria-hidden', 'true');
+    $('workspaceName').value = '';
+  }
+  function openWorkspaceManager() {
+    renderWorkspaceControls();
+    $('workspaceManager').classList.add('open');
+    $('workspaceManager').setAttribute('aria-hidden', 'false');
+    $('workspaceName').focus();
+  }
+  function createWorkspace(event) {
+    event.preventDefault();
+    const name = $('workspaceName').value.trim();
+    if (!name) return;
+    if (workspaces.some((workspace) => workspace.name.toLocaleLowerCase() === name.toLocaleLowerCase())) { toast('มีชื่อโปรเจกต์นี้แล้ว'); return; }
+    const workspace = { id: crypto.randomUUID?.() || `journal-${Date.now()}-${Math.random().toString(16).slice(2)}`, name, tradeCount: 0 };
+    workspaces.push(workspace);
+    try { persistWorkspaceState(); }
+    catch { workspaces.pop(); toast('สร้างโปรเจกต์ไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม'); return; }
+    $('workspaceName').value = '';
+    switchWorkspace(workspace.id);
+    renderWorkspaceControls();
+    toast(`สร้างโปรเจกต์ “${name}” แล้ว`);
+  }
+  function manageWorkspaceAction(event) {
+    const selectId = event.target.closest('[data-select-workspace]')?.dataset.selectWorkspace;
+    const renameId = event.target.closest('[data-rename-workspace]')?.dataset.renameWorkspace;
+    const deleteId = event.target.closest('[data-delete-workspace]')?.dataset.deleteWorkspace;
+    if (selectId) { closeWorkspaceManager(); switchWorkspace(selectId); return; }
+    if (renameId) {
+      const workspace = workspaces.find((item) => item.id === renameId);
+      if (!workspace) return;
+      const nextName = window.prompt('ตั้งชื่อโปรเจกต์', workspace.name)?.trim();
+      if (!nextName || nextName === workspace.name) return;
+      if (workspaces.some((item) => item.id !== renameId && item.name.toLocaleLowerCase() === nextName.toLocaleLowerCase())) { toast('มีชื่อโปรเจกต์นี้แล้ว'); return; }
+      const previousName = workspace.name;
+      workspace.name = nextName;
+      try { persistWorkspaceState(); }
+      catch { workspace.name = previousName; toast('เปลี่ยนชื่อไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม'); return; }
+      renderWorkspaceControls();
+      toast('เปลี่ยนชื่อโปรเจกต์แล้ว');
+      return;
+    }
+    if (deleteId) {
+      if (workspaces.length <= 1) { toast('ต้องมีอย่างน้อย 1 โปรเจกต์'); return; }
+      const workspace = workspaces.find((item) => item.id === deleteId);
+      const workspaceTradeCount = workspace?.id === activeWorkspaceId ? trades.length : (workspace?.tradeCount ?? loadWorkspaceTrades(workspace?.id).length);
+      if (!workspace || !window.confirm(`ลบโปรเจกต์ “${workspace.name}” พร้อมรายการเทรด ${workspaceTradeCount} รายการและ Setup ทั้งหมดหรือไม่?\n\nการลบย้อนกลับไม่ได้`)) return;
+      const previousWorkspaces = workspaces;
+      const previousActiveId = activeWorkspaceId;
+      const previousTrades = trades;
+      const previousSetups = setups;
+      workspaces = workspaces.filter((item) => item.id !== deleteId);
+      if (activeWorkspaceId === deleteId) {
+        activeWorkspaceId = workspaces[0].id;
+        trades = loadWorkspaceTrades(activeWorkspaceId);
+        setups = loadWorkspaceSetups(activeWorkspaceId);
+      }
+      try { persistWorkspaceState(); }
+      catch {
+        workspaces = previousWorkspaces;
+        activeWorkspaceId = previousActiveId;
+        trades = previousTrades;
+        setups = previousSetups;
+        toast('ลบโปรเจกต์ไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม');
+        return;
+      }
+      localStorage.removeItem(projectDataKey(deleteId, 'trades'));
+      localStorage.removeItem(projectDataKey(deleteId, 'setups'));
+      renderSetupOptions();
+      renderWorkspaceControls();
+      render();
+      toast('ลบโปรเจกต์แล้ว');
+    }
+  }
   function dateOffset(days) {
     const date = new Date();
     date.setDate(date.getDate() + days);
@@ -314,6 +474,7 @@
     $('clearFilters').style.visibility = ($('periodFilter').value !== 'all' || $('instrumentFilter').value !== 'all' || $('searchTrades').value) ? 'visible' : 'hidden';
   }
   function render() {
+    $('accountWorkspaceSummary').textContent = `${trades.length} รายการเทรด`;
     const filtered = getVisibleTrades();
     renderStats(filtered);
     renderRows(filtered);
@@ -489,7 +650,8 @@
     toast('ส่งออก CSV แล้ว');
   }
   function backupJson() {
-    download(`redline-backup-${localDate()}.json`, JSON.stringify({ app: 'Redline Trading Journal', version: 1, exportedAt: new Date().toISOString(), trades, setups }, null, 2), 'application/json');
+    const backupWorkspaces = workspaces.map(({ id, name }) => ({ id, name, trades: loadWorkspaceTrades(id), setups: loadWorkspaceSetups(id) }));
+    download(`redline-backup-${localDate()}.json`, JSON.stringify({ app: 'Redline Trading Journal', version: 2, exportedAt: new Date().toISOString(), activeWorkspaceId, workspaces: backupWorkspaces }, null, 2), 'application/json');
     toast('ดาวน์โหลดไฟล์สำรองแล้ว');
   }
   function clearAllTrades() {
@@ -498,8 +660,8 @@
     const confirmed = window.confirm(`ลบรายการเทรดทั้งหมด ${trades.length} รายการ รวมรูปและลิงก์กราฟ?\n\nการลบนี้ย้อนกลับไม่ได้ แนะนำสำรองข้อมูลก่อน`);
     if (!confirmed) return;
     try {
-      localStorage.removeItem(STORAGE_KEY);
       trades = [];
+      persist();
       render();
       toast('ล้างรายการเทรดทั้งหมดแล้ว');
     } catch {
@@ -535,7 +697,13 @@
     const existingIndex = trades.findIndex((item) => item.id === trade.id);
     const updatedTrades = [...trades];
     if (existingIndex >= 0) updatedTrades[existingIndex] = trade; else updatedTrades.push(trade);
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedTrades)); }
+    try {
+      const updatedWorkspaces = workspaces.map((workspace) => workspace.id === activeWorkspaceId ? { ...workspace, tradeCount: updatedTrades.length } : workspace);
+      localStorage.setItem(projectDataKey(activeWorkspaceId, 'trades'), JSON.stringify(updatedTrades));
+      localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(updatedWorkspaces.map(({ id, name, tradeCount }) => ({ id, name, tradeCount }))));
+      localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
+      workspaces = updatedWorkspaces;
+    }
     catch { $('formError').textContent = 'พื้นที่จัดเก็บในเบราว์เซอร์เต็ม ลองลบภาพบางส่วนแล้วบันทึกอีกครั้ง'; return; }
     trades = updatedTrades;
     render();
@@ -544,6 +712,13 @@
   }
 
   $('todayLabel').textContent = new Intl.DateTimeFormat('th-TH', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).format(new Date());
+  renderWorkspaceControls();
+  $('workspaceSelect').addEventListener('change', (event) => switchWorkspace(event.target.value));
+  $('manageWorkspaces').addEventListener('click', openWorkspaceManager);
+  $('workspaceForm').addEventListener('submit', createWorkspace);
+  $('closeWorkspaceManager').addEventListener('click', closeWorkspaceManager);
+  $('workspaceRows').addEventListener('click', manageWorkspaceAction);
+  $('workspaceManager').addEventListener('click', (event) => { if (event.target === $('workspaceManager')) closeWorkspaceManager(); });
   $('periodFilter').addEventListener('change', render);
   $('instrumentFilter').addEventListener('change', render);
   $('searchTrades').addEventListener('input', render);
@@ -651,6 +826,7 @@
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       if ($('imageViewer').classList.contains('open')) closeImageViewer();
+      else if ($('workspaceManager').classList.contains('open')) closeWorkspaceManager();
       else if ($('setupManager').classList.contains('open')) closeSetupManager();
       else closeModal();
     }
