@@ -17,6 +17,7 @@
   let setups = loadWorkspaceSetups(activeWorkspaceId);
   let demoMode = false;
   let editingSetupName = null;
+  let setupReturnToTrade = false;
   let pendingImages = [];
   let toastTimer;
   let chartMode = 'pnl';
@@ -93,6 +94,7 @@
   }
   function switchWorkspace(id) {
     if (!workspaces.some((workspace) => workspace.id === id) || id === activeWorkspaceId) return;
+    resetSetupEditor();
     if (demoMode) {
       demoMode = false;
       $('demoBanner').hidden = true;
@@ -108,6 +110,7 @@
     $('periodFilter').value = 'all';
     $('instrumentFilter').value = 'all';
     renderSetupOptions();
+    renderSetupManager();
     renderWorkspaceControls();
     render();
     toast(`เปิดโปรเจกต์ “${active.name}” แล้ว`);
@@ -276,18 +279,19 @@
   }
   function renderSetupManager() {
     $('setupCount').textContent = `${setups.length} รายการ`;
-    $('setupRows').innerHTML = setups.length ? setups.map((name) => `<div class="setup-row"><span class="setup-row-name">${escapeHtml(name)}</span><div class="setup-row-actions"><button type="button" data-edit-setup="${escapeHtml(name)}">แก้ชื่อ</button><button type="button" class="delete-setup" data-delete-setup="${escapeHtml(name)}">ลบ</button></div></div>`).join('') : '<div class="setup-empty">ยังไม่มี Setup เพิ่มรายการใหม่ได้ด้านบน</div>';
+    $('navSetupCount').textContent = String(setups.length);
+    $('setupRows').innerHTML = setups.length ? setups.map((name) => {
+      const tradeCount = trades.filter((trade) => trade.setup === name).length;
+      return `<div class="setup-row"><div class="setup-row-info"><span class="setup-row-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span><small>${tradeCount} เทรด</small></div><div class="setup-row-actions"><button type="button" data-edit-setup="${escapeHtml(name)}" aria-label="เปลี่ยนชื่อ ${escapeHtml(name)}" title="เปลี่ยนชื่อ">✎</button><button type="button" class="delete-setup" data-delete-setup="${escapeHtml(name)}" aria-label="ลบ ${escapeHtml(name)}" title="ลบ">×</button></div></div>`;
+    }).join('') : '<div class="setup-empty">ยังไม่มี Setup — เพิ่มรายการแรกได้จากช่องด้านบน</div>';
+    $('returnToTrade').hidden = !setupReturnToTrade;
   }
   function resetSetupEditor() {
     editingSetupName = null;
     $('setupName').value = '';
     $('saveSetupButton').textContent = '＋ เพิ่ม Setup';
+    $('saveSetupButton').setAttribute('aria-label', 'เพิ่ม Setup');
     $('cancelSetupEdit').hidden = true;
-  }
-  function closeSetupManager() {
-    $('setupManager').classList.remove('open');
-    $('setupManager').setAttribute('aria-hidden', 'true');
-    resetSetupEditor();
   }
   function saveSetup(event) {
     event.preventDefault();
@@ -523,6 +527,7 @@
   function closeModal() {
     $('tradeModal').classList.remove('open');
     $('tradeModal').setAttribute('aria-hidden', 'true');
+    setupReturnToTrade = false;
   }
   function renderImagePreviews() {
     $('imagePreviewGrid').innerHTML = pendingImages.map((src, index) => {
@@ -767,12 +772,18 @@
   $('closeImageViewer').addEventListener('click', closeImageViewer);
   $('imageViewer').addEventListener('click', (event) => { if (event.target === $('imageViewer')) closeImageViewer(); });
   $('manageSetups').addEventListener('click', () => {
-    renderSetupManager();
-    $('setupManager').classList.add('open');
-    $('setupManager').setAttribute('aria-hidden', 'false');
-    $('setupName').focus();
+    setupReturnToTrade = true;
+    $('tradeModal').classList.remove('open');
+    $('tradeModal').setAttribute('aria-hidden', 'true');
+    switchView('setups');
   });
-  $('closeSetupManager').addEventListener('click', closeSetupManager);
+  $('returnToTrade').addEventListener('click', () => {
+    setupReturnToTrade = false;
+    renderSetupOptions($('setup').value);
+    switchView('trades');
+    $('tradeModal').classList.add('open');
+    $('tradeModal').setAttribute('aria-hidden', 'false');
+  });
   $('cancelSetupEdit').addEventListener('click', resetSetupEditor);
   $('setupForm').addEventListener('submit', saveSetup);
   $('setupRows').addEventListener('click', (event) => {
@@ -781,11 +792,13 @@
     if (editName) {
       editingSetupName = editName;
       $('setupName').value = editName;
-      $('saveSetupButton').textContent = 'บันทึกชื่อ';
+      $('saveSetupButton').textContent = '✓ บันทึกชื่อ';
+      $('saveSetupButton').setAttribute('aria-label', 'บันทึกชื่อ Setup');
       $('cancelSetupEdit').hidden = false;
       $('setupName').focus();
     }
     if (deleteName && window.confirm(`ลบ Setup “${deleteName}” ออกจากตัวเลือกหรือไม่? รายการเทรดเดิมจะยังคงเก็บชื่อนี้ไว้`)) {
+      if (editingSetupName === deleteName) resetSetupEditor();
       setups = setups.filter((name) => name !== deleteName);
       persistSetups();
       renderSetupManager();
@@ -793,7 +806,6 @@
       toast('ลบ Setup จากตัวเลือกแล้ว');
     }
   });
-  $('setupManager').addEventListener('click', (event) => { if (event.target === $('setupManager')) closeSetupManager(); });
   $('pnlPreview').addEventListener('click', (event) => {
     const targetKind = event.target.closest('[data-exit-price]')?.dataset.exitPrice;
     if (!targetKind) return;
@@ -802,12 +814,14 @@
   });
   $('menuToggle').addEventListener('click', () => $('sidebar').classList.toggle('open'));
   function switchView(view) {
-    const showTrades = view === 'trades';
-    $('overviewView').hidden = showTrades;
-    $('tradesView').hidden = !showTrades;
+    const views = { overview: 'overviewView', trades: 'tradesView', setups: 'setupsView' };
+    const labels = { overview: 'ภาพรวม', trades: 'รายการเทรด', setups: 'จัดการ Setup' };
+    if (!views[view]) view = 'overview';
+    Object.entries(views).forEach(([key, id]) => { $(id).hidden = key !== view; });
     document.querySelectorAll('.nav-item[data-view]').forEach((link) => link.classList.toggle('active', link.dataset.view === view));
-    $('viewCrumb').textContent = showTrades ? 'รายการเทรด' : 'ภาพรวม';
-    history.replaceState(null, '', `#${showTrades ? 'trades' : 'overview'}`);
+    $('viewCrumb').textContent = labels[view];
+    history.replaceState(null, '', `#${view}`);
+    if (view === 'setups') renderSetupManager();
   }
   $('sidebar').addEventListener('click', (event) => {
     const nav = event.target.closest('.nav-item[data-view]');
@@ -827,11 +841,12 @@
     if (event.key === 'Escape') {
       if ($('imageViewer').classList.contains('open')) closeImageViewer();
       else if ($('workspaceManager').classList.contains('open')) closeWorkspaceManager();
-      else if ($('setupManager').classList.contains('open')) closeSetupManager();
-      else closeModal();
+      else if (editingSetupName) resetSetupEditor();
+      else if ($('tradeModal').classList.contains('open')) closeModal();
     }
   });
-  switchView(location.hash === '#trades' ? 'trades' : 'overview');
+  switchView(location.hash === '#trades' ? 'trades' : location.hash === '#setups' ? 'setups' : 'overview');
   renderSetupOptions();
+  renderSetupManager();
   render();
 })();
