@@ -281,7 +281,7 @@
     $('setupCount').textContent = `${setups.length} รายการ`;
     $('navSetupCount').textContent = String(setups.length);
     $('setupRows').innerHTML = setups.length ? setups.map((name) => {
-      const tradeCount = trades.filter((trade) => trade.setup === name).length;
+      const tradeCount = trades.filter((trade) => trade.setup === name && !trade.missedEntry).length;
       return `<div class="setup-row"><div class="setup-row-info"><span class="setup-row-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span><small>${tradeCount} เทรด</small></div><div class="setup-row-actions"><button type="button" data-edit-setup="${escapeHtml(name)}" aria-label="เปลี่ยนชื่อ ${escapeHtml(name)}" title="เปลี่ยนชื่อ">✎</button><button type="button" class="delete-setup" data-delete-setup="${escapeHtml(name)}" aria-label="ลบ ${escapeHtml(name)}" title="ลบ">×</button></div></div>`;
     }).join('') : '<div class="setup-empty">ยังไม่มี Setup — เพิ่มรายการแรกได้จากช่องด้านบน</div>';
     $('returnToTrade').hidden = !setupReturnToTrade;
@@ -319,6 +319,7 @@
   function getVisibleTrades() {
     const period = $('periodFilter').value;
     const instrument = $('instrumentFilter').value;
+    const recordType = $('recordTypeFilter').value;
     const query = $('searchTrades').value.trim().toLowerCase();
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -328,12 +329,13 @@
       const tradeDate = new Date(`${trade.date}T00:00:00`);
       const inPeriod = period === 'all' || (!Number.isNaN(tradeDate.getTime()) && tradeDate >= start);
       const inInstrument = instrument === 'all' || trade.instrument === instrument;
-      const haystack = [trade.instrument, trade.setup, trade.notes, trade.session, trade.direction, trade.chartUrl].join(' ').toLowerCase();
-      return inPeriod && inInstrument && haystack.includes(query);
+      const haystack = [trade.missedEntry ? 'miss entry missed entry' : 'trade เทรดจริง', trade.instrument, trade.setup, trade.notes, trade.session, trade.direction, trade.chartUrl].join(' ').toLowerCase();
+      const matchesType = recordType === 'all' || (recordType === 'missed' ? trade.missedEntry : !trade.missedEntry);
+      return inPeriod && inInstrument && matchesType && haystack.includes(query);
     });
   }
   function renderStats(filtered) {
-    const ordered = [...filtered].sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+    const ordered = filtered.filter((trade) => !trade.missedEntry).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
     const results = ordered.map((trade) => ({ trade, ...metrics(trade) }));
     const total = results.reduce((sum, item) => sum + item.net, 0);
     const wins = results.filter((item) => item.net > 0).length;
@@ -460,25 +462,30 @@
   function renderRows(filtered) {
     const rows = [...filtered].sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
     $('tradeRows').innerHTML = rows.map((trade) => {
-      const result = metrics(trade);
+      const isMissed = Boolean(trade.missedEntry);
+      const result = isMissed ? null : metrics(trade);
       const isFutures = trade.instrument !== 'XAUUSD';
-      const rText = result.r == null ? '—' : `${result.r >= 0 ? '+' : ''}${result.r.toFixed(2)}R`;
-      const outcomeClass = result.outcome === 'WIN' ? 'win' : result.outcome === 'LOSS' ? 'loss' : 'flat';
+      const rText = !result || result.r == null ? '—' : `${result.r >= 0 ? '+' : ''}${result.r.toFixed(2)}R`;
+      const outcomeClass = isMissed ? 'missed' : result.outcome === 'WIN' ? 'win' : result.outcome === 'LOSS' ? 'loss' : 'flat';
       const chartUrl = safeHttpsUrl(trade.chartUrl);
       const images = Array.isArray(trade.images) ? trade.images : [];
       const chartCell = `${images.length ? `<button class="chart-count-button" type="button" data-view-images="${escapeHtml(trade.id)}" aria-label="ดูรูปทั้งหมด ${images.length} รูป">ดูรูป</button>` : ''}${chartUrl ? (isDirectImageUrl(chartUrl) ? `<a class="chart-thumb-link" href="${escapeHtml(chartUrl)}" target="_blank" rel="noopener noreferrer" title="เปิดภาพ TradingView"><img src="${escapeHtml(chartUrl)}" alt="ภาพกราฟ"></a>` : `<a class="chart-url-link" href="${escapeHtml(chartUrl)}" target="_blank" rel="noopener noreferrer">TradingView ↗</a>`) : ''}`;
       const rowActions = demoMode ? '' : `<button class="row-action" data-edit="${escapeHtml(trade.id)}" title="แก้ไข" aria-label="แก้ไขรายการ">✎</button><button class="row-action" data-delete="${escapeHtml(trade.id)}" title="ลบ" aria-label="ลบรายการ">×</button>`;
-      return `<tr><td><span class="date-cell">${dateLabel(trade.date)}<small>${escapeHtml(trade.time || '—')}</small></span></td><td><span class="instrument-pill ${isFutures ? 'futures' : ''}"><i></i>${escapeHtml(trade.instrument)}</span></td><td><span class="dir-tag ${trade.direction === 'Short' ? 'short' : 'long'}">${trade.direction === 'Short' ? 'SHORT' : 'LONG'}</span></td><td>${escapeHtml(quantityWithUnit(trade))}</td><td><span class="date-cell">${Number(trade.entry).toLocaleString('en-US')} <span style="color:#707076">/</span> ${Number(trade.exit).toLocaleString('en-US')}<small>SL ${trade.stop === '' ? '—' : Number(trade.stop).toLocaleString('en-US')} · TP ${trade.target == null || trade.target === '' ? '—' : Number(trade.target).toLocaleString('en-US')}</small></span></td><td><span class="setup-chip">${escapeHtml(trade.setup || '—')}</span></td><td><div class="chart-cell">${chartCell || '<span class="muted-text">—</span>'}</div></td><td><span class="outcome-chip ${outcomeClass}">${result.outcome}</span></td><td class="${result.r == null ? 'muted-text' : result.r >= 0 ? 'positive-text' : 'negative-text'}">${rText}</td><td class="${result.net > 0 ? 'positive-text' : result.net < 0 ? 'negative-text' : 'muted-text'}">${money(result.net)}</td><td><div class="row-actions">${rowActions}</div></td></tr>`;
+      const priceText = `${Number(trade.entry).toLocaleString('en-US')} <span style="color:#707076">/</span> ${isMissed || trade.exit == null || trade.exit === '' ? '—' : Number(trade.exit).toLocaleString('en-US')}`;
+      return `<tr class="${isMissed ? 'missed-entry-row' : ''}"><td><span class="date-cell">${dateLabel(trade.date)}<small>${escapeHtml(trade.time || '—')}</small></span></td><td><span class="instrument-pill ${isFutures ? 'futures' : ''}"><i></i>${escapeHtml(trade.instrument)}</span></td><td><span class="dir-tag ${trade.direction === 'Short' ? 'short' : 'long'}">${trade.direction === 'Short' ? 'SHORT' : 'LONG'}</span></td><td>${isMissed ? '—' : escapeHtml(quantityWithUnit(trade))}</td><td><span class="date-cell">${priceText}<small>SL ${trade.stop === '' ? '—' : Number(trade.stop).toLocaleString('en-US')} · TP ${trade.target == null || trade.target === '' ? '—' : Number(trade.target).toLocaleString('en-US')}</small></span></td><td><span class="setup-chip">${escapeHtml(trade.setup || '—')}</span></td><td><div class="chart-cell">${chartCell || '<span class="muted-text">—</span>'}</div></td><td><span class="outcome-chip ${outcomeClass}">${isMissed ? 'MISSED' : result.outcome}</span></td><td class="${!result || result.r == null ? 'muted-text' : result.r >= 0 ? 'positive-text' : 'negative-text'}">${rText}</td><td class="${!result || result.net === 0 ? 'muted-text' : result.net > 0 ? 'positive-text' : 'negative-text'}">${result ? money(result.net) : '—'}</td><td><div class="row-actions">${rowActions}</div></td></tr>`;
     }).join('');
     const hasTrades = rows.length > 0;
     $('emptyState').classList.toggle('show', !hasTrades);
     $('emptyState').style.display = hasTrades ? 'none' : 'block';
-    $('tableSummary').textContent = `แสดง ${rows.length} จาก ${getActiveTrades().length} รายการ${demoMode ? ' · ข้อมูลตัวอย่าง' : ''}`;
+    const missedCount = rows.filter((trade) => trade.missedEntry).length;
+    $('tableSummary').textContent = `แสดง ${rows.length} รายการ${missedCount ? ` · Miss Entry ${missedCount}` : ''} จาก ${getActiveTrades().length}${demoMode ? ' · ข้อมูลตัวอย่าง' : ''}`;
     $('clearAllTrades').hidden = demoMode || trades.length === 0;
-    $('clearFilters').style.visibility = ($('periodFilter').value !== 'all' || $('instrumentFilter').value !== 'all' || $('searchTrades').value) ? 'visible' : 'hidden';
+    $('clearFilters').style.visibility = ($('periodFilter').value !== 'all' || $('instrumentFilter').value !== 'all' || $('recordTypeFilter').value !== 'all' || $('searchTrades').value) ? 'visible' : 'hidden';
   }
   function render() {
-    $('accountWorkspaceSummary').textContent = `${trades.length} รายการเทรด`;
+    const actualCount = trades.filter((trade) => !trade.missedEntry).length;
+    const missedCount = trades.length - actualCount;
+    $('accountWorkspaceSummary').textContent = `${actualCount} เทรดจริง · ${missedCount} Miss Entry`;
     const filtered = getVisibleTrades();
     renderStats(filtered);
     renderRows(filtered);
@@ -493,11 +500,12 @@
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   }
-  function openModal(trade = null) {
+  function openModal(trade = null, recordType = trade?.missedEntry ? 'missed' : 'trade') {
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนจึงบันทึกหรือแก้ไขรายการจริงได้'); return; }
     $('tradeForm').reset();
     $('tradeId').value = trade?.id || '';
-    $('modalTitle').textContent = trade ? 'แก้ไขรายการเทรด' : 'บันทึกรายการเทรด';
+    $('recordType').value = recordType;
+    $('modalTitle').textContent = trade ? (trade.missedEntry ? 'แก้ไข Miss Entry' : 'แก้ไขรายการเทรด') : (recordType === 'missed' ? 'บันทึก Miss Entry' : 'บันทึกรายการเทรด');
     $('instrument').value = trade?.instrument || 'XAUUSD';
     $('tradeDate').value = trade?.date || localDate();
     $('tradeTime').value = trade?.time || '';
@@ -519,6 +527,7 @@
     $('formError').textContent = '';
     $('tradeModal').classList.add('open');
     $('tradeModal').setAttribute('aria-hidden', 'false');
+    updateRecordMode();
     updateInstrumentField();
     updatePreview();
     updateChartUrlPreview();
@@ -590,18 +599,34 @@
   }
   function updateInstrumentField() {
     const cfd = $('instrument').value === 'XAUUSD';
-    $('cfdMultiplierField').style.display = cfd ? 'flex' : 'none';
-    $('cfdMultiplier').required = cfd;
+    const missed = $('recordType').value === 'missed';
+    $('cfdMultiplierField').hidden = missed || !cfd;
+    $('cfdMultiplierField').style.display = cfd && !missed ? 'flex' : 'none';
+    $('cfdMultiplier').required = cfd && !missed;
     $('quantityLabel').innerHTML = cfd ? 'จำนวน lot <b>*</b>' : 'จำนวนสัญญา <b>*</b>';
     $('quantity').min = cfd ? '0.01' : '1';
     $('quantity').step = cfd ? '0.01' : '1';
     $('quantityHelp').textContent = cfd ? 'กรอกขนาด lot ตามที่ใช้จริง' : 'Futures นับเป็นสัญญาเต็มหน่วย เช่น 1, 2, 3 สัญญา';
     updatePreview();
   }
+  function updateRecordMode() {
+    const missed = $('recordType').value === 'missed';
+    ['quantityField', 'feesField', 'exitPriceField'].forEach((id) => { $(id).hidden = missed; });
+    $('quantity').required = !missed;
+    $('exitPrice').required = !missed;
+    $('cfdMultiplier').required = !missed && $('instrument').value === 'XAUUSD';
+    $('missedEntryNote').hidden = !missed;
+    $('toggleMissedEntry').textContent = missed ? 'กลับเป็นเทรดจริง' : 'บันทึกเป็น Miss Entry';
+    $('toggleMissedEntry').setAttribute('aria-pressed', String(missed));
+    $('toggleMissedEntry').classList.toggle('active', missed);
+    $('saveTradeButton').innerHTML = missed ? '＋ บันทึก Miss Entry' : '<span>＋</span> บันทึกเทรด';
+    $('modalTitle').textContent = $('tradeId').value ? (missed ? 'แก้ไข Miss Entry' : 'แก้ไขรายการเทรด') : (missed ? 'บันทึก Miss Entry' : 'บันทึกรายการเทรด');
+  }
   function updatePreview() {
     const instrument = $('instrument').value;
     const multiplier = FUTURES[instrument] || Number($('cfdMultiplier').value) || 0;
     const entry = Number($('entryPrice').value);
+    const entryRaw = $('entryPrice').value;
     const exitRaw = $('exitPrice').value;
     const exit = Number(exitRaw);
     const stopRaw = $('stopPrice').value;
@@ -616,6 +641,18 @@
     const risk = validBase && stopDistance > 0 ? stopDistance * multiplier * qty : 0;
     const reward = validBase && targetDistance > 0 ? targetDistance * multiplier * qty : 0;
     const rr = risk > 0 && reward > 0 ? reward / risk : null;
+    if ($('recordType').value === 'missed') {
+      const riskPoints = entryRaw !== '' && stopRaw !== '' && stopDistance > 0 ? Math.abs(entry - stop) : 0;
+      const rewardPoints = entryRaw !== '' && targetRaw !== '' && targetDistance > 0 ? Math.abs(target - entry) : 0;
+      $('outcomeLabel').textContent = 'Miss Entry · แผนที่พลาด';
+      $('previewPnl').textContent = 'ยังไม่ได้เข้าออเดอร์';
+      $('previewPnl').className = '';
+      $('previewRisk').textContent = riskPoints ? `${riskPoints.toLocaleString('en-US', { maximumFractionDigits: 4 })} จุด` : '—';
+      $('previewTarget').textContent = rewardPoints ? `${rewardPoints.toLocaleString('en-US', { maximumFractionDigits: 4 })} จุด` : '—';
+      $('previewRR').textContent = riskPoints > 0 && rewardPoints > 0 ? `${(rewardPoints / riskPoints).toFixed(2)} : 1` : '—';
+      $('previewDetails').textContent = 'บันทึกจุด Entry, SL และ TP ของโอกาสที่ไม่ได้เข้า · ไม่คำนวณเป็นกำไร/ขาดทุนจริง';
+      return;
+    }
     $('previewRisk').textContent = risk > 0 ? money(risk) : '—';
     $('previewTarget').textContent = reward > 0 ? money(Math.max(0, reward - fees)) : '—';
     $('previewRR').textContent = rr == null ? '—' : `${rr.toFixed(2)} : 1`;
@@ -645,11 +682,11 @@
   }
   function exportCsv() {
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนส่งออกข้อมูลจริง'); return; }
-    const header = ['Date', 'Time', 'Instrument', 'Market', 'Direction', 'Quantity', 'Entry', 'Exit', 'Stop', 'Target', 'Gross PnL USD', 'Fees USD', 'Net PnL USD', 'Risk USD', 'Target USD', 'R Multiple', 'Outcome', 'Session', 'Setup', 'TradingView URL', 'Followed Plan', 'Notes'];
+    const header = ['Record Type', 'Date', 'Time', 'Instrument', 'Market', 'Direction', 'Quantity', 'Entry', 'Exit', 'Stop', 'Target', 'Gross PnL USD', 'Fees USD', 'Net PnL USD', 'Risk USD', 'Target USD', 'R Multiple', 'Outcome', 'Session', 'Setup', 'TradingView URL', 'Followed Plan', 'Notes'];
     const quote = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
     const lines = trades.map((trade) => {
-      const value = metrics(trade);
-      return [trade.date, trade.time, trade.instrument, trade.instrument === 'XAUUSD' ? 'CFD' : 'Futures', trade.direction, trade.quantity, trade.entry, trade.exit, trade.stop, trade.target, value.gross.toFixed(2), Number(trade.fees || 0).toFixed(2), value.net.toFixed(2), value.risk.toFixed(2), value.target.toFixed(2), value.r == null ? '' : value.r.toFixed(3), value.outcome, trade.session, trade.setup, trade.chartUrl, trade.followedPlan, trade.notes].map(quote).join(',');
+      const value = trade.missedEntry ? null : metrics(trade);
+      return [trade.missedEntry ? 'Miss Entry' : 'Trade', trade.date, trade.time, trade.instrument, trade.instrument === 'XAUUSD' ? 'CFD' : 'Futures', trade.direction, trade.quantity, trade.entry, trade.exit, trade.stop, trade.target, value ? value.gross.toFixed(2) : '', Number(trade.fees || 0).toFixed(2), value ? value.net.toFixed(2) : '', value ? value.risk.toFixed(2) : '', value ? value.target.toFixed(2) : '', value?.r == null ? '' : value.r.toFixed(3), value?.outcome || 'MISSED', trade.session, trade.setup, trade.chartUrl, trade.followedPlan, trade.notes].map(quote).join(',');
     });
     download(`redline-trades-${localDate()}.csv`, `\ufeff${[header.map(quote).join(','), ...lines].join('\r\n')}`, 'text/csv;charset=utf-8');
     toast('ส่งออก CSV แล้ว');
@@ -675,14 +712,15 @@
   }
   function onSubmit(event) {
     event.preventDefault();
+    const missedEntry = $('recordType').value === 'missed';
     const instrument = $('instrument').value;
     const multiplier = FUTURES[instrument] || Number($('cfdMultiplier').value);
-    if (!multiplier || multiplier <= 0) { $('formError').textContent = 'กรุณาระบุมูลค่าต่อจุดตาม contract specification ของ broker'; return; }
-    const entry = Number($('entryPrice').value), exit = Number($('exitPrice').value);
+    if (!missedEntry && (!multiplier || multiplier <= 0)) { $('formError').textContent = 'กรุณาระบุมูลค่าต่อจุดตาม contract specification ของ broker'; return; }
+    const entry = Number($('entryPrice').value), exit = missedEntry ? null : Number($('exitPrice').value);
     const stop = Number($('stopPrice').value), target = Number($('targetPrice').value);
     const direction = document.querySelector('input[name="direction"]:checked').value;
     const side = direction === 'Short' ? -1 : 1;
-    if (!Number.isFinite(entry) || !Number.isFinite(exit) || !Number.isFinite(stop) || !Number.isFinite(target)) { $('formError').textContent = 'กรุณากรอกราคา Entry, SL, TP และราคาออกให้ครบ'; return; }
+    if (!Number.isFinite(entry) || (!missedEntry && !Number.isFinite(exit)) || !Number.isFinite(stop) || !Number.isFinite(target)) { $('formError').textContent = 'กรุณากรอกราคา Entry, SL และ TP ให้ครบ'; return; }
     if ((entry - stop) * side <= 0) { $('formError').textContent = direction === 'Long' ? 'Long ต้องวาง SL ต่ำกว่า Entry' : 'Short ต้องวาง SL สูงกว่า Entry'; return; }
     if ((target - entry) * side <= 0) { $('formError').textContent = direction === 'Long' ? 'Long ต้องวาง TP สูงกว่า Entry' : 'Short ต้องวาง TP ต่ำกว่า Entry'; return; }
     const chartUrlRaw = $('chartUrl').value.trim();
@@ -692,13 +730,13 @@
       id: $('tradeId').value || (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`),
       instrument, date: $('tradeDate').value, time: $('tradeTime').value,
       session: $('session').value, direction,
-      quantity: Number($('quantity').value), entry, exit, stop, target,
-      fees: Number($('fees').value) || 0, cfdMultiplier: instrument === 'XAUUSD' ? multiplier : '',
+      missedEntry, quantity: missedEntry ? null : Number($('quantity').value), entry, exit, stop, target,
+      fees: missedEntry ? 0 : (Number($('fees').value) || 0), cfdMultiplier: !missedEntry && instrument === 'XAUUSD' ? multiplier : '',
       setup: $('setup').value, followedPlan: $('followedPlan').value, notes: $('notes').value.trim(),
       chartUrl, images: [...pendingImages]
     };
-    if (!trade.date || trade.quantity <= 0 || trade.fees < 0) { $('formError').textContent = 'กรุณาตรวจสอบวันที่ จำนวน และค่าธรรมเนียม'; return; }
-    if (instrument !== 'XAUUSD' && !Number.isInteger(trade.quantity)) { $('formError').textContent = 'Futures ต้องกรอกจำนวนสัญญาเป็นจำนวนเต็ม เช่น 1 หรือ 2'; return; }
+    if (!trade.date || (!missedEntry && (trade.quantity <= 0 || trade.fees < 0))) { $('formError').textContent = 'กรุณาตรวจสอบวันที่ จำนวน และค่าธรรมเนียม'; return; }
+    if (!missedEntry && instrument !== 'XAUUSD' && !Number.isInteger(trade.quantity)) { $('formError').textContent = 'Futures ต้องกรอกจำนวนสัญญาเป็นจำนวนเต็ม เช่น 1 หรือ 2'; return; }
     const existingIndex = trades.findIndex((item) => item.id === trade.id);
     const updatedTrades = [...trades];
     if (existingIndex >= 0) updatedTrades[existingIndex] = trade; else updatedTrades.push(trade);
@@ -726,12 +764,18 @@
   $('workspaceManager').addEventListener('click', (event) => { if (event.target === $('workspaceManager')) closeWorkspaceManager(); });
   $('periodFilter').addEventListener('change', render);
   $('instrumentFilter').addEventListener('change', render);
+  $('recordTypeFilter').addEventListener('change', render);
   $('searchTrades').addEventListener('input', render);
   ['addTradeTop', 'addTradeList', 'addTradeInline', 'emptyAddButton'].forEach((id) => $(id).addEventListener('click', () => openModal()));
   ['closeModal', 'cancelModal'].forEach((id) => $(id).addEventListener('click', closeModal));
   $('tradeModal').addEventListener('click', (event) => { if (event.target === $('tradeModal')) closeModal(); });
   $('tradeForm').addEventListener('submit', onSubmit);
   $('instrument').addEventListener('change', updateInstrumentField);
+  $('toggleMissedEntry').addEventListener('click', () => {
+    $('recordType').value = $('recordType').value === 'missed' ? 'trade' : 'missed';
+    updateRecordMode();
+    updateInstrumentField();
+  });
   ['cfdMultiplier', 'entryPrice', 'exitPrice', 'stopPrice', 'targetPrice', 'quantity', 'fees'].forEach((id) => $(id).addEventListener('input', updatePreview));
   document.querySelectorAll('input[name="direction"]').forEach((input) => input.addEventListener('change', updatePreview));
   $('tradeRows').addEventListener('click', (event) => {
@@ -748,7 +792,7 @@
       }
     }
   });
-  $('clearFilters').addEventListener('click', () => { $('periodFilter').value = 'all'; $('instrumentFilter').value = 'all'; $('searchTrades').value = ''; render(); });
+  $('clearFilters').addEventListener('click', () => { $('periodFilter').value = 'all'; $('instrumentFilter').value = 'all'; $('recordTypeFilter').value = 'all'; $('searchTrades').value = ''; render(); });
   $('chartModeToggle').addEventListener('click', (event) => {
     const button = event.target.closest('[data-chart-mode]');
     if (!button) return;
