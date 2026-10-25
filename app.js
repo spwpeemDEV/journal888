@@ -511,6 +511,9 @@
     $('tradeTime').value = trade?.time || '';
     $('session').value = trade?.session || '';
     $('quantity').value = trade?.quantity ?? 1;
+    $('riskBudget').value = trade?.riskBudget ?? '';
+    $('riskSizingFeedback').textContent = 'ใส่ Risk, Entry และ SL ก่อนคำนวณ · ค่าธรรมเนียมและ slippage ยังไม่รวม';
+    $('riskSizingFeedback').classList.remove('error', 'calculated');
     $('entryPrice').value = trade?.entry ?? '';
     $('exitPrice').value = trade?.exit ?? '';
     $('stopPrice').value = trade?.stop ?? '';
@@ -611,7 +614,7 @@
   }
   function updateRecordMode() {
     const missed = $('recordType').value === 'missed';
-    ['quantityField', 'feesField', 'exitPriceField'].forEach((id) => { $(id).hidden = missed; });
+    ['quantityField', 'riskSizingField', 'feesField', 'exitPriceField'].forEach((id) => { $(id).hidden = missed; });
     $('quantity').required = !missed;
     $('exitPrice').required = !missed;
     $('cfdMultiplier').required = !missed && $('instrument').value === 'XAUUSD';
@@ -621,6 +624,36 @@
     $('toggleMissedEntry').classList.toggle('active', missed);
     $('saveTradeButton').innerHTML = missed ? '＋ บันทึก Miss Entry' : '<span>＋</span> บันทึกเทรด';
     $('modalTitle').textContent = $('tradeId').value ? (missed ? 'แก้ไข Miss Entry' : 'แก้ไขรายการเทรด') : (missed ? 'บันทึก Miss Entry' : 'บันทึกรายการเทรด');
+  }
+  function calculateContractsFromRisk() {
+    const feedback = $('riskSizingFeedback');
+    const riskBudget = Number($('riskBudget').value);
+    const entry = Number($('entryPrice').value), stop = Number($('stopPrice').value);
+    const direction = document.querySelector('input[name="direction"]:checked')?.value === 'Short' ? -1 : 1;
+    const stopDistance = (entry - stop) * direction;
+    const multiplier = multiplierFor({ instrument: $('instrument').value, cfdMultiplier: $('cfdMultiplier').value });
+    if (!Number.isFinite(riskBudget) || riskBudget <= 0) { feedback.textContent = 'กรอกงบ Risk เป็นจำนวนเงินมากกว่า 0'; feedback.classList.add('error'); return; }
+    if ($('entryPrice').value === '' || $('stopPrice').value === '' || stopDistance <= 0) { feedback.textContent = 'กรอก Entry และ SL ให้ถูกฝั่งกับ Long/Short ก่อน'; feedback.classList.add('error'); return; }
+    if (!multiplier || multiplier <= 0) { feedback.textContent = 'กรอกมูลค่าต่อจุดของ CFD ตาม broker ก่อนคำนวณ'; feedback.classList.add('error'); return; }
+    const riskPerUnit = stopDistance * multiplier;
+    const isCfd = $('instrument').value === 'XAUUSD';
+    const step = isCfd ? 0.01 : 1;
+    const quantity = Math.floor((riskBudget / riskPerUnit + 1e-10) / step) * step;
+    if (quantity < step) { feedback.textContent = `Risk $${riskBudget.toFixed(2)} ต่ำกว่าความเสี่ยงขั้นต่ำต่อ ${isCfd ? '0.01 lot' : '1 สัญญา'} ($${(riskPerUnit * step).toFixed(2)})`; feedback.classList.add('error'); return; }
+    $('quantity').value = isCfd ? quantity.toFixed(2) : String(quantity);
+    const estimatedRisk = riskPerUnit * quantity;
+    feedback.textContent = `คำนวณได้ ${$('quantity').value} ${isCfd ? 'lot' : 'สัญญา'} · เสี่ยงจาก SL ประมาณ $${estimatedRisk.toFixed(2)} (ไม่รวม fee/slippage)`;
+    feedback.classList.remove('error');
+    feedback.classList.add('calculated');
+    updatePreview();
+  }
+  function markRiskSizingStale() {
+    const feedback = $('riskSizingFeedback');
+    if (feedback.classList.contains('calculated')) {
+      feedback.textContent = 'ค่า Entry, SL, Risk หรือสินทรัพย์เปลี่ยนแล้ว — กดคำนวณจำนวนอีกครั้ง';
+      feedback.classList.remove('calculated');
+    }
+    feedback.classList.remove('error');
   }
   function updatePreview() {
     const instrument = $('instrument').value;
@@ -682,11 +715,11 @@
   }
   function exportCsv() {
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนส่งออกข้อมูลจริง'); return; }
-    const header = ['Record Type', 'Date', 'Time', 'Instrument', 'Market', 'Direction', 'Quantity', 'Entry', 'Exit', 'Stop', 'Target', 'Gross PnL USD', 'Fees USD', 'Net PnL USD', 'Risk USD', 'Target USD', 'R Multiple', 'Outcome', 'Session', 'Setup', 'TradingView URL', 'Followed Plan', 'Notes'];
+    const header = ['Record Type', 'Date', 'Time', 'Instrument', 'Market', 'Direction', 'Quantity', 'Planned Risk USD', 'Entry', 'Exit', 'Stop', 'Target', 'Gross PnL USD', 'Fees USD', 'Net PnL USD', 'Risk USD', 'Target USD', 'R Multiple', 'Outcome', 'Session', 'Setup', 'TradingView URL', 'Followed Plan', 'Notes'];
     const quote = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
     const lines = trades.map((trade) => {
       const value = trade.missedEntry ? null : metrics(trade);
-      return [trade.missedEntry ? 'Miss Entry' : 'Trade', trade.date, trade.time, trade.instrument, trade.instrument === 'XAUUSD' ? 'CFD' : 'Futures', trade.direction, trade.quantity, trade.entry, trade.exit, trade.stop, trade.target, value ? value.gross.toFixed(2) : '', Number(trade.fees || 0).toFixed(2), value ? value.net.toFixed(2) : '', value ? value.risk.toFixed(2) : '', value ? value.target.toFixed(2) : '', value?.r == null ? '' : value.r.toFixed(3), value?.outcome || 'MISSED', trade.session, trade.setup, trade.chartUrl, trade.followedPlan, trade.notes].map(quote).join(',');
+      return [trade.missedEntry ? 'Miss Entry' : 'Trade', trade.date, trade.time, trade.instrument, trade.instrument === 'XAUUSD' ? 'CFD' : 'Futures', trade.direction, trade.quantity, trade.riskBudget, trade.entry, trade.exit, trade.stop, trade.target, value ? value.gross.toFixed(2) : '', Number(trade.fees || 0).toFixed(2), value ? value.net.toFixed(2) : '', value ? value.risk.toFixed(2) : '', value ? value.target.toFixed(2) : '', value?.r == null ? '' : value.r.toFixed(3), value?.outcome || 'MISSED', trade.session, trade.setup, trade.chartUrl, trade.followedPlan, trade.notes].map(quote).join(',');
     });
     download(`redline-trades-${localDate()}.csv`, `\ufeff${[header.map(quote).join(','), ...lines].join('\r\n')}`, 'text/csv;charset=utf-8');
     toast('ส่งออก CSV แล้ว');
@@ -713,6 +746,8 @@
   function onSubmit(event) {
     event.preventDefault();
     const missedEntry = $('recordType').value === 'missed';
+    const riskBudgetRaw = $('riskBudget').value;
+    if (!missedEntry && riskBudgetRaw !== '' && (!Number.isFinite(Number(riskBudgetRaw)) || Number(riskBudgetRaw) <= 0)) { $('formError').textContent = 'Risk ต้องเป็นจำนวนเงินมากกว่า 0 หรือเว้นว่างไว้'; return; }
     const instrument = $('instrument').value;
     const multiplier = FUTURES[instrument] || Number($('cfdMultiplier').value);
     if (!missedEntry && (!multiplier || multiplier <= 0)) { $('formError').textContent = 'กรุณาระบุมูลค่าต่อจุดตาม contract specification ของ broker'; return; }
@@ -731,6 +766,7 @@
       instrument, date: $('tradeDate').value, time: $('tradeTime').value,
       session: $('session').value, direction,
       missedEntry, quantity: missedEntry ? null : Number($('quantity').value), entry, exit, stop, target,
+      riskBudget: missedEntry ? null : (Number($('riskBudget').value) || 0),
       fees: missedEntry ? 0 : (Number($('fees').value) || 0), cfdMultiplier: !missedEntry && instrument === 'XAUUSD' ? multiplier : '',
       setup: $('setup').value, followedPlan: $('followedPlan').value, notes: $('notes').value.trim(),
       chartUrl, images: [...pendingImages]
@@ -770,14 +806,16 @@
   ['closeModal', 'cancelModal'].forEach((id) => $(id).addEventListener('click', closeModal));
   $('tradeModal').addEventListener('click', (event) => { if (event.target === $('tradeModal')) closeModal(); });
   $('tradeForm').addEventListener('submit', onSubmit);
-  $('instrument').addEventListener('change', updateInstrumentField);
+  $('instrument').addEventListener('change', () => { updateInstrumentField(); markRiskSizingStale(); });
+  $('calculateContracts').addEventListener('click', calculateContractsFromRisk);
   $('toggleMissedEntry').addEventListener('click', () => {
     $('recordType').value = $('recordType').value === 'missed' ? 'trade' : 'missed';
     updateRecordMode();
     updateInstrumentField();
   });
-  ['cfdMultiplier', 'entryPrice', 'exitPrice', 'stopPrice', 'targetPrice', 'quantity', 'fees'].forEach((id) => $(id).addEventListener('input', updatePreview));
-  document.querySelectorAll('input[name="direction"]').forEach((input) => input.addEventListener('change', updatePreview));
+  ['cfdMultiplier', 'entryPrice', 'exitPrice', 'stopPrice', 'targetPrice', 'quantity', 'fees'].forEach((id) => $(id).addEventListener('input', () => { updatePreview(); if (['cfdMultiplier', 'entryPrice', 'stopPrice', 'quantity'].includes(id)) markRiskSizingStale(); }));
+  $('riskBudget').addEventListener('input', markRiskSizingStale);
+  document.querySelectorAll('input[name="direction"]').forEach((input) => input.addEventListener('change', () => { updatePreview(); markRiskSizingStale(); }));
   $('tradeRows').addEventListener('click', (event) => {
     const editId = event.target.closest('[data-edit]')?.dataset.edit;
     const deleteId = event.target.closest('[data-delete]')?.dataset.delete;
