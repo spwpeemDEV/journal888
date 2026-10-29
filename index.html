@@ -19,16 +19,17 @@
       </a>
       <div class="side-label">WORKSPACE</div>
       <div class="workspace-switcher">
-        <label for="workspaceSelect">โปรเจกต์ที่เปิดอยู่</label>
-        <div class="workspace-switcher-controls"><select id="workspaceSelect" aria-label="เลือกโปรเจกต์"></select><button type="button" id="manageWorkspaces" aria-label="จัดการโปรเจกต์" title="จัดการโปรเจกต์">＋</button></div>
+        <label>โปรเจกต์ที่เปิดอยู่</label>
+        <button type="button" class="project-sidebar-link" id="projectsShortcut" data-view="projects"><span class="project-sidebar-icon">▦</span><span class="project-sidebar-copy"><strong id="sidebarProjectName">My Journal</strong><small>ดูโปรเจกต์ทั้งหมด</small></span><span class="project-sidebar-arrow">›</span></button>
+        <select id="workspaceSelect" aria-label="เลือกโปรเจกต์" hidden></select><button type="button" id="manageWorkspaces" aria-label="จัดการโปรเจกต์" title="จัดการโปรเจกต์" hidden>＋</button>
       </div>
       <nav class="side-nav" aria-label="เมนูหลัก">
         <a class="nav-item active" data-view="overview" href="#overview"><span class="nav-icon">◫</span> ภาพรวม <span class="nav-indicator"></span></a>
         <a class="nav-item" data-view="trades" href="#trades"><span class="nav-icon">☷</span> รายการเทรด <span class="nav-count" id="navTradeCount">0</span></a>
-        <a class="nav-item" data-view="setups" href="#setups"><span class="nav-icon">⚙</span> จัดการ Setup <span class="nav-count" id="navSetupCount">0</span></a>
+        <a class="nav-item" data-view="setups" href="#setups"><span class="nav-icon">⚙</span> ตั้งค่า <span class="nav-count" id="navSetupCount">0</span></a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="account-card"><span class="account-avatar">TJ</span><div><strong id="accountWorkspaceName">My Journal</strong><small id="accountWorkspaceSummary">ข้อมูลในอุปกรณ์นี้</small></div><span class="online-dot"></span></div>
+        <div class="account-card"><span class="account-avatar">MT</span><div><strong>Mock Trader</strong></div><span class="online-dot"></span></div>
         <div class="side-note"><span class="tiny-lock">▣</span> บันทึกอัตโนมัติในเบราว์เซอร์</div>
       </div>
     </aside>
@@ -37,9 +38,9 @@
       <header class="topbar">
         <button class="mobile-menu" id="menuToggle" aria-label="เปิดเมนู">☰</button>
         <div class="breadcrumb">WORKSPACE <span>/</span> <strong id="viewCrumb">ภาพรวม</strong><span>/</span><strong id="activeWorkspaceLabel">My Journal</strong></div>
-        <div class="topbar-right"><span class="today-label" id="todayLabel"></span><button class="secondary-button demo-button" id="demoButton">▶ <span id="demoButtonLabel">ข้อมูลตัวอย่าง</span></button><button class="icon-button" id="exportButton" title="ส่งออกข้อมูล" aria-label="ส่งออกข้อมูล">⇩</button><button class="primary-button" id="addTradeTop"><span>＋</span> บันทึกเทรด</button></div>
+        <div class="topbar-right"><span class="today-label" id="todayLabel"></span><button class="secondary-button demo-button" id="demoButton">▶ <span id="demoButtonLabel">ข้อมูลตัวอย่าง</span></button><button class="icon-button" id="exportButton" title="ส่งออกข้อมูล" aria-label="ส่งออกข้อมูล">⇩</button></div>
       </header>
-      <div class="demo-banner" id="demoBanner" hidden><span>◉ โหมดสาธิต</span> ตัวอย่าง 100 ไม้ กระจายตาม Setup ที่ตั้งไว้ จำลองแพ้ติดกัน 15 ไม้แล้วฟื้นตัว — ไม่ปะปนและไม่บันทึกทับรายการจริง</div>
+      <div class="demo-banner" id="demoBanner" hidden><span>◉ โหมดสาธิต</span> ตัวอย่าง 3 โปรเจกต์: เทพ, Stable และ Data เละ เพื่อดูภาพรวมและการ์ดโปรเจกต์ — ไม่ปะปนและไม่บันทึกทับรายการจริง</div>
 
       <section class="view-panel" id="overviewView">
       <section class="page-heading">
@@ -54,6 +55,9 @@
         <article class="stat-card"><div class="stat-top"><span>จำนวนเทรด</span><span class="stat-icon">▤</span></div><div class="stat-value" id="tradeCount">0</div><div class="stat-foot"><span class="stat-caption" id="avgR">ค่าเฉลี่ย 0.00R / เทรด</span><span class="stat-change neutral" id="tradePeriod">ทั้งหมด</span></div></article>
         <article class="stat-card streak-card"><div class="stat-top"><span>แพ้ติดกันสูงสุด</span><span class="stat-icon red-icon">↘</span></div><div class="stat-value" id="maxLossStreak">0<span class="value-unit"> ไม้</span></div><div class="stat-foot"><span class="stat-caption">นับตามตัวกรองปัจจุบัน</span></div></article>
         <article class="stat-card"><div class="stat-top"><span>R สะสม</span><span class="stat-icon">Σ</span></div><div class="stat-value" id="totalR">+0.0<span class="value-unit">R</span></div><div class="stat-foot"><span class="stat-caption">ผล R สุทธิรวมทุกไม้</span></div></article>
+        <article class="stat-card drawdown-card"><div class="stat-top"><span>Max Drawdown</span><span class="stat-icon red-icon">↘</span></div><div class="stat-value" id="maxDrawdown">—</div><div class="stat-foot"><span class="stat-caption" id="maxDrawdownR">Peak-to-trough · —</span><span class="stat-change neutral" id="drawdownPeriod">ทั้งหมด</span></div></article>
+        <article class="stat-card expectancy-card"><div class="stat-top"><span>Expectancy (R)</span><span class="stat-icon">E</span></div><div class="stat-value" id="expectancyR">—</div><div class="stat-foot"><span class="stat-caption" id="expectancySample">เทรดที่มี Risk</span></div></article>
+        <article class="stat-card max-rr-card"><div class="stat-top"><span>Max RR</span><span class="stat-icon">↗</span></div><div class="stat-value" id="maxRR">—</div><div class="stat-foot"><span class="stat-caption" id="maxRRSample">เทรดที่กรอก Max RR</span></div></article>
       </section>
 
       <section class="content-grid">
@@ -83,33 +87,58 @@
 
       </section>
 
+      <section class="view-panel" id="projectsView" hidden>
+        <section class="page-heading projects-page-heading">
+          <div><div class="eyebrow"><span class="live-dot"></span> PROJECT WORKSPACE</div><h1>โปรเจกต์</h1><p>แยกพื้นที่บันทึกเทรดและการตั้งค่าของแต่ละโปรเจกต์ออกจากกัน</p></div>
+          <button class="primary-button" id="createProjectButton" type="button"><span>＋</span> สร้างโปรเจกต์</button>
+        </section>
+        <section class="panel projects-panel">
+          <div class="panel-heading"><div><div class="panel-title">โปรเจกต์ของฉัน</div><div class="panel-subtitle">เลือกโปรเจกต์เพื่อเปิดใช้งาน หรือจัดการรายละเอียดของแต่ละโปรเจกต์</div></div><span class="setup-total" id="projectsCount">0 โปรเจกต์</span></div>
+          <div class="projects-grid" id="projectsGrid"></div>
+        </section>
+      </section>
+
       <section class="view-panel" id="tradesView" hidden>
       <section class="page-heading trades-page-heading">
         <div><div class="eyebrow"><span class="live-dot"></span> TRADE HISTORY</div><h1>รายการเทรด</h1><p>บันทึกผลและภาพกราฟของแต่ละออเดอร์</p></div>
         <button class="primary-button" id="addTradeList"><span>＋</span> บันทึกเทรด</button>
       </section>
       <section class="panel journal-panel" id="journal">
-        <div class="journal-heading"><div><div class="panel-title">ประวัติการเทรด</div><div class="panel-subtitle">ค้นหา กรอง และเปิดดูรูปกราฟ</div></div><div class="journal-actions"><label class="search-box"><span>⌕</span><input id="searchTrades" type="search" placeholder="ค้นหารายการ..." aria-label="ค้นหารายการ"></label><select class="table-filter" id="instrumentFilter" aria-label="กรองตามสินทรัพย์"><option value="all">ทุกสินทรัพย์</option><option>XAUUSD</option><option>GC</option><option>MGC</option><option>NQ</option><option>MNQ</option></select><select class="table-filter" id="recordTypeFilter" aria-label="กรองประเภทบันทึก"><option value="all">ทุกประเภท</option><option value="trade">เทรดจริง</option><option value="missed">Miss Entry</option></select><button class="text-button" id="addTradeInline">＋ เพิ่มรายการ</button></div></div>
-        <div class="table-scroll"><table><thead><tr><th>วัน / เวลา</th><th>สินทรัพย์</th><th>ฝั่ง</th><th>ขนาด / หน่วย</th><th>ราคาเข้า / ออก</th><th>Setup</th><th>ภาพ</th><th>สถานะ / ผล</th><th>ผลลัพธ์ (R)</th><th>Net P&amp;L</th><th></th></tr></thead><tbody id="tradeRows"></tbody></table></div>
-        <div class="empty-state" id="emptyState"><div class="empty-icon">↗</div><strong>เริ่มบันทึกเทรดแรกของคุณ</strong><p>เพิ่มรายละเอียดการเข้าออก เพื่อให้เห็นสถิติและพัฒนากลยุทธ์จากข้อมูลจริง</p><button class="primary-button" id="emptyAddButton"><span>＋</span> เพิ่มรายการเทรด</button></div>
+        <div class="journal-heading"><div><div class="panel-title">ประวัติการเทรด</div><div class="panel-subtitle">ค้นหา กรอง และเปิดดูรูปกราฟ</div></div><div class="journal-actions"><label class="search-box"><span>⌕</span><input id="searchTrades" type="search" placeholder="ค้นหารายการ..." aria-label="ค้นหารายการ"></label><select class="table-filter" id="instrumentFilter" aria-label="กรองตามสินทรัพย์"><option value="all">ทุกสินทรัพย์</option><option>XAUUSD</option><option>GC</option><option>MGC</option><option>NQ</option><option>MNQ</option></select><select class="table-filter" id="recordTypeFilter" aria-label="กรองประเภทบันทึก"><option value="all">ทุกประเภท</option><option value="trade">เทรดจริง</option><option value="missed">Miss Entry</option></select></div></div>
+        <div class="table-scroll"><table><thead><tr><th>วัน / เวลา</th><th>สินทรัพย์</th><th>ฝั่ง</th><th>ขนาด / หน่วย</th><th>ราคาเข้า / ออก</th><th>Setup</th><th>POI</th><th>กราฟ</th><th>สถานะ / ผล</th><th>ผลลัพธ์ (R)</th><th>Net P&amp;L</th><th></th></tr></thead><tbody id="tradeRows"></tbody></table></div>
+        <div class="empty-state" id="emptyState"><div class="empty-icon">↗</div><strong>เริ่มบันทึกเทรดแรกของคุณ</strong><p>เพิ่มรายละเอียดการเข้าออก เพื่อให้เห็นสถิติและพัฒนากลยุทธ์จากข้อมูลจริง</p></div>
         <div class="table-footer"><span id="tableSummary">แสดง 0 รายการ</span><div class="table-footer-actions"><button class="danger-text-button" id="clearAllTrades" hidden>ล้างรายการเทรดทั้งหมด</button><button class="text-button" id="clearFilters">ล้างตัวกรอง</button></div></div>
       </section>
       </section>
       <section class="view-panel" id="setupsView" hidden>
         <section class="page-heading setups-page-heading">
-          <div><div class="eyebrow"><span class="live-dot"></span> SETUP WORKSPACE</div><h1>จัดการ Setup</h1><p>เพิ่ม เปลี่ยนชื่อ หรือลบกลยุทธ์สำหรับโปรเจกต์ที่เลือกอยู่</p></div>
+          <div><div class="eyebrow"><span class="live-dot"></span> JOURNAL SETTINGS</div><h1>ตั้งค่า</h1><p>จัดการ Setup, POI และค่าเริ่มต้นสำหรับการบันทึกเทรด</p></div>
           <button type="button" class="secondary-button" id="returnToTrade" hidden>← กลับไปบันทึกเทรด</button>
         </section>
-        <section class="panel setup-page-panel">
-          <div class="panel-heading"><div><div class="panel-title">Setup ของโปรเจกต์นี้</div><div class="panel-subtitle">เปลี่ยนชื่อ Setup จะอัปเดตชื่อในรายการเทรดเดิมด้วย</div></div><span class="setup-total" id="setupCount">0 รายการ</span></div>
+        <section class="panel settings-defaults-panel">
+          <div class="panel-heading"><div><div class="panel-title">ค่าเริ่มต้นตอนบันทึกเทรด</div><div class="panel-subtitle">ระบบจะเลือกค่าเหล่านี้ให้อัตโนมัติเมื่อกดบันทึกรายการใหม่</div></div><span class="setup-total">DEFAULTS</span></div>
+          <form class="settings-defaults-form" id="settingsForm">
+            <label class="settings-field"><span>Risk ($)</span><input id="defaultRisk" type="text" inputmode="decimal" autocomplete="off" placeholder="เช่น 100"></label>
+            <label class="settings-field"><span>Setup</span><select id="defaultSetup"><option value="">ไม่กำหนด</option></select></label>
+            <label class="settings-field"><span>POI</span><select id="defaultPoi"><option value="">ไม่กำหนด</option></select></label>
+            <div class="settings-actions"><button class="primary-button settings-save-button" id="saveSettingsButton" type="submit" disabled>บันทึกค่าเริ่มต้น</button><button class="secondary-button settings-clear-button" id="clearSettingsButton" type="button" disabled>ล้างค่าเริ่มต้น</button></div>
+          </form>
+        </section>
+        <section class="panel setup-page-panel settings-manager-panel">
+          <div class="panel-heading"><div><div class="panel-title">จัดการตัวเลือก</div><div class="panel-subtitle">สลับ chip เพื่อจัดการรายการที่ใช้ในแบบฟอร์มบันทึกเทรด</div></div><span class="setup-total" id="optionManagerCount">0 รายการ</span></div>
+          <div class="option-manager-chips" id="optionManagerChips" role="tablist" aria-label="ประเภทตัวเลือก"><button type="button" class="option-chip active" data-option-kind="setup" role="tab" aria-selected="true">Setup</button><button type="button" class="option-chip" data-option-kind="poi" role="tab" aria-selected="false">POI</button></div>
           <form class="setup-add-form" id="setupForm"><input id="setupName" type="text" maxlength="40" placeholder="เช่น Retest Expansion" autocomplete="off" required><button class="primary-button" type="submit" id="saveSetupButton">＋ เพิ่ม Setup</button><button type="button" class="secondary-button" id="cancelSetupEdit" hidden>ยกเลิก</button></form>
-          <div class="setup-list-heading"><span>รายการ Setup</span><span>จำนวนเทรด</span></div>
+          <form class="setup-add-form" id="poiForm" hidden><input id="poiName" type="text" maxlength="40" placeholder="เช่น Liquidity grab" autocomplete="off" required><button class="primary-button" type="submit" id="savePoiButton">＋ เพิ่ม POI</button><button type="button" class="secondary-button" id="cancelPoiEdit" hidden>ยกเลิก</button></form>
+          <div class="setup-list-heading"><span id="optionListLabel">รายการ Setup</span><span>จำนวนเทรด</span></div>
           <div class="setup-list setup-page-list" id="setupRows"></div>
-          <div class="setup-footnote">ลบ Setup จะไม่ลบรายการเทรดเดิม แต่รายการเหล่านั้นจะไม่มี Setup กำกับ</div>
+          <div class="setup-list setup-page-list" id="poiRows" hidden></div>
+          <div class="setup-footnote" id="setupFootnote">ลบ Setup จะไม่ลบรายการเทรดเดิม แต่รายการเหล่านั้นจะไม่มี Setup กำกับ</div>
+          <div class="setup-footnote" id="poiFootnote" hidden>ลบ POI จะไม่ลบรายการเทรดเดิม แต่รายการเหล่านั้นจะไม่มี POI กำกับ</div>
         </section>
       </section>
       <footer class="page-footer"><span><i class="footer-dot"></i> ระบบพร้อมใช้งาน</span><span>ข้อมูลเก็บไว้ในเบราว์เซอร์ของคุณ · <button id="backupButton">สำรองข้อมูล</button></span></footer>
     </main>
+    <button class="bulk-delete-button" id="deleteSelectedTrades" hidden><span>⌫</span> ลบรายการที่เลือก (0)</button>
   </div>
 
   <div class="modal-backdrop" id="tradeModal" aria-hidden="true">
@@ -124,20 +153,21 @@
           <label class="field"><span>วันเทรด <b>*</b></span><input id="tradeDate" type="date" required></label>
           <label class="field"><span>เวลาเข้า</span><input id="tradeTime" type="time"></label>
           <label class="field"><span>Session</span><select id="session"><option value="">เลือก Session</option><option>Asia</option><option>London</option><option>New York</option><option>Overlap</option></select></label>
+          <label class="field"><span>POI (Point of Interest)</span><select id="poi"><option value="">เลือก POI</option><option>PDH / PDL</option><option>FVG</option><option>Order Block</option><option>Liquidity sweep</option><option>Support / Resistance</option><option>VWAP</option><option>Opening range</option><option>อื่น ๆ</option></select><small>เลือกจุดหรือโซนสำคัญที่ใช้ประกอบการเข้าเทรด</small></label>
+          <label class="field"><span>Setup</span><select id="setup"><option value="">เลือก Setup</option></select></label>
           <label class="field"><span>ฝั่ง <b>*</b></span><div class="direction-toggle"><label><input type="radio" name="direction" value="Long" checked><span>↗ Long</span></label><label><input type="radio" name="direction" value="Short"><span>↘ Short</span></label></div></label>
-          <label class="field trade-only-field" id="quantityField"><span id="quantityLabel">จำนวน lot <b>*</b></span><input id="quantity" type="number" min="0.01" step="0.01" value="1" required><small id="quantityHelp">CFD กรอกขนาด lot ตามที่ใช้</small></label>
-          <label class="field full" id="cfdMultiplierField"><span>มูลค่าต่อการขยับ 1.00 ต่อ 1 lot (USD) <b>*</b></span><input id="cfdMultiplier" type="number" min="0.0001" step="any" placeholder="ตรวจสอบจาก contract specification ของ broker"><small>ใส่ค่าตาม broker ของคุณเพื่อคำนวณ P&amp;L ให้ถูกต้อง</small></label>
-          <label class="field"><span>จุดเข้า / Entry <b>*</b></span><input id="entryPrice" type="number" step="any" required placeholder="0.00"></label>
-          <label class="field"><span>Stop Loss <b>*</b></span><input id="stopPrice" type="number" step="any" required placeholder="ราคาที่จะตัดขาดทุน"></label>
-          <div class="field full trade-only-field" id="riskSizingField"><span>กำหนด Risk แล้วคำนวณจำนวน</span><div class="risk-sizing-controls"><label class="risk-amount-input"><span class="visually-hidden">Risk สูงสุดต่อรายการ (USD)</span><span class="risk-currency">$</span><input id="riskBudget" type="number" min="0.01" step="0.01" placeholder="Risk สูงสุด เช่น 100"></label><button type="button" class="secondary-button" id="calculateContracts">คำนวณจำนวน</button></div><small id="riskSizingFeedback">ใส่ Risk, Entry และ SL ก่อนคำนวณ · ค่าธรรมเนียมและ slippage ยังไม่รวม</small></div>
-          <label class="field"><span>Take Profit <b>*</b></span><input id="targetPrice" type="number" step="any" required placeholder="ราคาเป้าหมายทำกำไร"></label>
-          <label class="field trade-only-field" id="feesField"><span>ค่าธรรมเนียมรวม (USD)</span><input id="fees" type="number" min="0" step="0.01" value="0"></label>
-          <label class="field trade-only-field" id="exitPriceField"><span>ราคาออกจริง <b>*</b></span><input id="exitPrice" type="number" step="any" required placeholder="ราคาออกจากตลาดจริง"></label>
-          <label class="field"><span class="field-label-row"><span>Setup</span><button type="button" class="field-action" id="manageSetups">จัดการตัวเลือก</button></span><select id="setup"><option value="">เลือก Setup</option></select></label>
+          <label class="field trade-only-field" id="quantityField"><span id="quantityLabel">จำนวน lot <b>*</b></span><input id="quantity" type="text" inputmode="decimal" autocomplete="off" value="0.01" required><small id="quantityHelp">CFD สูงสุด 2 ตำแหน่ง เช่น 0.01, 0.10, 1.25</small></label>
+          <label class="field full" id="cfdMultiplierField"><span>มูลค่าต่อการขยับ 1.00 ต่อ 1 lot (USD) <b>*</b></span><input id="cfdMultiplier" type="text" inputmode="decimal" autocomplete="off" placeholder="ตรวจสอบจาก contract specification ของ broker"><small>ใส่ค่าตาม broker ของคุณเพื่อคำนวณ P&amp;L ให้ถูกต้อง</small></label>
+          <label class="field"><span>จุดเข้า / Entry <b>*</b></span><input id="entryPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="0.00"></label>
+          <label class="field"><span>Stop Loss <b>*</b></span><input id="stopPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาที่จะตัดขาดทุน"></label>
+          <div class="field full trade-only-field" id="riskSizingField"><span>กำหนด Risk แล้วคำนวณจำนวน</span><div class="risk-sizing-controls"><label class="risk-amount-input"><span class="visually-hidden">Risk สูงสุดต่อรายการ (USD)</span><span class="risk-currency">$</span><input id="riskBudget" type="text" inputmode="decimal" autocomplete="off" placeholder="Risk สูงสุด เช่น 100"></label><button type="button" class="secondary-button" id="calculateContracts">คำนวณจำนวน</button></div><small id="riskSizingFeedback">ใส่ Risk, Entry และ SL ก่อนคำนวณ · ค่าธรรมเนียมและ slippage ยังไม่รวม</small></div>
+          <label class="field"><span>Take Profit <b>*</b></span><input id="targetPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาเป้าหมายทำกำไร"></label>
+          <label class="field trade-only-field" id="feesField"><span>ค่าธรรมเนียมรวม (USD)</span><input id="fees" type="text" inputmode="decimal" autocomplete="off" value="0"></label>
+          <label class="field trade-only-field" id="exitPriceField"><span>ราคาออกจริง <b>*</b></span><input id="exitPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาออกจากตลาดจริง"></label>
+          <label class="field trade-only-field"><span>Max RR (R)</span><input id="maxRR" type="text" inputmode="decimal" autocomplete="off" placeholder="เช่น 2.5"><small>กำไรสูงสุดที่เคยเห็น เทียบกับ Risk 1R (ไม่บังคับ)</small></label>
           <label class="field"><span>ทำตามแผน?</span><select id="followedPlan"><option value="yes">ทำตามแผน</option><option value="no">ผิดแผน</option></select></label>
           <label class="field full"><span>บันทึก / บทเรียน</span><textarea id="notes" rows="3" placeholder="เหตุผลเข้าเทรด สิ่งที่ทำได้ดี หรือสิ่งที่จะปรับปรุง..."></textarea></label>
-          <div class="field full"><span>ภาพกราฟ / ภาพประกอบ</span><label class="image-upload-button" for="imageFiles"><span>▧</span> เลือกรูปจากอุปกรณ์ <small>JPG, PNG หรือ WebP · เลือกได้หลายรูป</small></label><input id="imageFiles" class="visually-hidden" type="file" accept="image/*" multiple><div class="image-preview-grid" id="imagePreviewGrid"></div><small class="image-storage-note">ระบบย่อขนาดภาพและเก็บไว้ในเบราว์เซอร์นี้</small></div>
-          <div class="field full"><span>ลิงก์ TradingView</span><input id="chartUrl" type="url" inputmode="url" placeholder="https://www.tradingview.com/chart/... หรือ https://www.tradingview.com/x/.../"><small>วางลิงก์กราฟหรือไอเดียที่แชร์จาก TradingView — กดเปิดจากรายการเทรดได้</small><div class="chart-url-preview" id="chartUrlPreview" hidden></div></div>
+          <div class="field full"><span>ลิงก์ TradingView <small>(ไม่บังคับ)</small></span><div class="form-grid"><label class="field"><span>HTF</span><input id="chartUrlHtf" type="text" inputmode="url" autocomplete="off" placeholder="ลิงก์กราฟ HTF"></label><label class="field"><span>LTF</span><input id="chartUrlLtf" type="text" inputmode="url" autocomplete="off" placeholder="ลิงก์กราฟ LTF"></label></div><small>ใส่ลิงก์ TradingView แยกตาม Timeframe ได้ จะเว้นว่างช่องใดช่องหนึ่งก็ได้</small><div class="chart-url-preview" id="chartUrlPreview" hidden></div></div>
         </div>
         <div class="form-preview" id="pnlPreview"><div class="preview-heading"><span id="outcomeLabel">ผลจากราคาออกจริง</span><strong id="previewPnl">กรอกราคาเพื่อคำนวณ</strong></div><div class="preview-details" id="previewDetails">ใส่ Entry, SL และ TP เพื่อดูความเสี่ยงและกำไรเป้าหมาย</div><div class="preview-metrics"><span>เสี่ยง <b id="previewRisk">—</b></span><span>เป้าหมาย <b id="previewTarget">—</b></span><span>Risk / Reward <b id="previewRR">—</b></span></div><div class="quick-outcomes"><button type="button" data-exit-price="target">ใช้ราคา TP</button><button type="button" data-exit-price="stop">ใช้ราคา SL</button><button type="button" class="missed-entry-toggle" id="toggleMissedEntry" aria-pressed="false">บันทึกเป็น Miss Entry</button></div></div>
         <div class="form-error" id="formError" role="alert"></div>
@@ -156,6 +186,13 @@
   </div>
   <div class="modal-backdrop image-viewer-backdrop" id="imageViewer" aria-hidden="true">
     <section class="image-viewer-modal" role="dialog" aria-modal="true" aria-labelledby="imageViewerTitle"><div class="modal-header"><div><div class="eyebrow">TRADE CHARTS</div><h2 id="imageViewerTitle">ภาพประกอบรายการเทรด</h2></div><button class="close-button" id="closeImageViewer" aria-label="ปิด">×</button></div><div class="image-viewer-grid" id="imageViewerGrid"></div></section>
+  </div>
+  <div class="modal-backdrop confirm-backdrop" id="confirmModal" aria-hidden="true">
+    <section class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+      <div class="confirm-heading"><span class="confirm-icon">!</span><div><div class="eyebrow">CONFIRM ACTION</div><h2 id="confirmTitle">ยืนยันการลบ</h2></div></div>
+      <p class="confirm-message" id="confirmMessage"></p><p class="confirm-detail" id="confirmDetail"></p>
+      <div class="modal-actions"><button class="secondary-button" id="confirmCancel" type="button">ยกเลิก</button><button class="danger-confirm-button" id="confirmAccept" type="button"><span>⌫</span><span id="confirmAcceptLabel">ลบรายการ</span></button></div>
+    </section>
   </div>
   <div class="toast" id="toast" role="status"></div>
 </body>
