@@ -8,9 +8,11 @@
   <title>Redline — Trading Journal</title>
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./missed-entry.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="./supabase-config.js" defer></script>
   <script src="./app.js" defer></script>
 </head>
-<body>
+<body class="auth-locked">
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="#overview" aria-label="Redline Trading Journal">
@@ -29,8 +31,8 @@
         <a class="nav-item" data-view="setups" href="#setups"><span class="nav-icon">⚙</span> ตั้งค่า <span class="nav-count" id="navSetupCount">0</span></a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="account-card"><span class="account-avatar">MT</span><div><strong>Mock Trader</strong></div><span class="online-dot"></span></div>
-        <div class="side-note"><span class="tiny-lock">▣</span> บันทึกอัตโนมัติในเบราว์เซอร์</div>
+        <div class="account-card"><span class="account-avatar">U</span><div class="account-copy"><strong id="signedInEmail">ผู้ใช้งาน</strong></div><button type="button" class="sign-out-button" id="signOutButton">ออกจากระบบ</button></div>
+        <div class="side-note"><span class="tiny-lock">▣</span> โปรเจกต์และรายการเทรด Sync ผ่าน Supabase</div>
       </div>
     </aside>
 
@@ -136,7 +138,7 @@
           <div class="setup-footnote" id="poiFootnote" hidden>ลบ POI จะไม่ลบรายการเทรดเดิม แต่รายการเหล่านั้นจะไม่มี POI กำกับ</div>
         </section>
       </section>
-      <footer class="page-footer"><span><i class="footer-dot"></i> ระบบพร้อมใช้งาน</span><span>ข้อมูลเก็บไว้ในเบราว์เซอร์ของคุณ · <button id="backupButton">สำรองข้อมูล</button></span></footer>
+      <footer class="page-footer"><span><i class="footer-dot"></i> ระบบพร้อมใช้งาน</span><span>ข้อมูล Sync ผ่าน Supabase · <button id="backupButton">สำรองข้อมูล</button></span></footer>
     </main>
     <button class="bulk-delete-button" id="deleteSelectedTrades" hidden><span>⌫</span> ลบรายการที่เลือก (0)</button>
   </div>
@@ -144,7 +146,7 @@
   <div class="modal-backdrop" id="tradeModal" aria-hidden="true">
     <section class="trade-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <div class="modal-header"><div><div class="eyebrow">TRADE JOURNAL</div><h2 id="modalTitle">บันทึกรายการเทรด</h2></div><button class="close-button" id="closeModal" aria-label="ปิด">×</button></div>
-      <form id="tradeForm">
+      <form id="tradeForm" novalidate>
         <input type="hidden" id="tradeId">
         <input type="hidden" id="recordType" value="trade">
         <div class="missed-entry-note" id="missedEntryNote" hidden><strong>Miss Entry</strong><span>บันทึกโอกาสที่เห็นแผนแต่ไม่ได้เข้าออเดอร์ — ไม่รวมในสถิติ P&amp;L</span></div>
@@ -160,14 +162,14 @@
           <label class="field full" id="cfdMultiplierField"><span>มูลค่าต่อการขยับ 1.00 ต่อ 1 lot (USD) <b>*</b></span><input id="cfdMultiplier" type="text" inputmode="decimal" autocomplete="off" placeholder="ตรวจสอบจาก contract specification ของ broker"><small>ใส่ค่าตาม broker ของคุณเพื่อคำนวณ P&amp;L ให้ถูกต้อง</small></label>
           <label class="field"><span>จุดเข้า / Entry <b>*</b></span><input id="entryPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="0.00"></label>
           <label class="field"><span>Stop Loss <b>*</b></span><input id="stopPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาที่จะตัดขาดทุน"></label>
-          <div class="field full trade-only-field" id="riskSizingField"><span>กำหนด Risk แล้วคำนวณจำนวน</span><div class="risk-sizing-controls"><label class="risk-amount-input"><span class="visually-hidden">Risk สูงสุดต่อรายการ (USD)</span><span class="risk-currency">$</span><input id="riskBudget" type="text" inputmode="decimal" autocomplete="off" placeholder="Risk สูงสุด เช่น 100"></label><button type="button" class="secondary-button" id="calculateContracts">คำนวณจำนวน</button></div><small id="riskSizingFeedback">ใส่ Risk, Entry และ SL ก่อนคำนวณ · ค่าธรรมเนียมและ slippage ยังไม่รวม</small></div>
           <label class="field"><span>Take Profit <b>*</b></span><input id="targetPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาเป้าหมายทำกำไร"></label>
+          <label class="field trade-only-field"><span>Max RR (R)</span><input id="maxRR" type="text" inputmode="decimal" autocomplete="off" placeholder="เช่น 2.5"><small>กำไรสูงสุดที่เคยเห็น เทียบกับ Risk 1R (ไม่บังคับ)</small></label>
+          <div class="field trade-only-field" id="riskSizingField"><span>กำหนด Risk แล้วคำนวณจำนวน</span><div class="risk-sizing-controls"><label class="risk-amount-input"><span class="visually-hidden">Risk สูงสุดต่อรายการ (USD)</span><span class="risk-currency">$</span><input id="riskBudget" type="text" inputmode="decimal" autocomplete="off" placeholder="Risk สูงสุด เช่น 100"></label></div><small id="riskSizingFeedback">ใส่ Risk, Entry และ SL เพื่อคำนวณจำนวนอัตโนมัติ · ค่าธรรมเนียมและ slippage ยังไม่รวม</small></div>
           <label class="field trade-only-field" id="feesField"><span>ค่าธรรมเนียมรวม (USD)</span><input id="fees" type="text" inputmode="decimal" autocomplete="off" value="0"></label>
           <label class="field trade-only-field" id="exitPriceField"><span>ราคาออกจริง <b>*</b></span><input id="exitPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาออกจากตลาดจริง"></label>
-          <label class="field trade-only-field"><span>Max RR (R)</span><input id="maxRR" type="text" inputmode="decimal" autocomplete="off" placeholder="เช่น 2.5"><small>กำไรสูงสุดที่เคยเห็น เทียบกับ Risk 1R (ไม่บังคับ)</small></label>
           <label class="field"><span>ทำตามแผน?</span><select id="followedPlan"><option value="yes">ทำตามแผน</option><option value="no">ผิดแผน</option></select></label>
           <label class="field full"><span>บันทึก / บทเรียน</span><textarea id="notes" rows="3" placeholder="เหตุผลเข้าเทรด สิ่งที่ทำได้ดี หรือสิ่งที่จะปรับปรุง..."></textarea></label>
-          <div class="field full"><span>ลิงก์ TradingView <small>(ไม่บังคับ)</small></span><div class="form-grid"><label class="field"><span>HTF</span><input id="chartUrlHtf" type="text" inputmode="url" autocomplete="off" placeholder="ลิงก์กราฟ HTF"></label><label class="field"><span>LTF</span><input id="chartUrlLtf" type="text" inputmode="url" autocomplete="off" placeholder="ลิงก์กราฟ LTF"></label></div><small>ใส่ลิงก์ TradingView แยกตาม Timeframe ได้ จะเว้นว่างช่องใดช่องหนึ่งก็ได้</small><div class="chart-url-preview" id="chartUrlPreview" hidden></div></div>
+          <div class="field full"><span>ลิงก์ TradingView <small>(ไม่บังคับ)</small></span><div class="form-grid"><label class="field"><span>HTF</span><input id="chartUrlHtf" type="text" inputmode="url" autocomplete="off" placeholder="ลิงก์กราฟ HTF"></label><label class="field"><span>LTF</span><input id="chartUrlLtf" type="text" inputmode="url" autocomplete="off" placeholder="ลิงก์กราฟ LTF"></label></div><small>ใส่ลิงก์ TradingView แยกตาม Timeframe ได้ จะเว้นว่างช่องใดช่องหนึ่งก็ได้</small></div>
         </div>
         <div class="form-preview" id="pnlPreview"><div class="preview-heading"><span id="outcomeLabel">ผลจากราคาออกจริง</span><strong id="previewPnl">กรอกราคาเพื่อคำนวณ</strong></div><div class="preview-details" id="previewDetails">ใส่ Entry, SL และ TP เพื่อดูความเสี่ยงและกำไรเป้าหมาย</div><div class="preview-metrics"><span>เสี่ยง <b id="previewRisk">—</b></span><span>เป้าหมาย <b id="previewTarget">—</b></span><span>Risk / Reward <b id="previewRR">—</b></span></div><div class="quick-outcomes"><button type="button" data-exit-price="target">ใช้ราคา TP</button><button type="button" data-exit-price="stop">ใช้ราคา SL</button><button type="button" class="missed-entry-toggle" id="toggleMissedEntry" aria-pressed="false">บันทึกเป็น Miss Entry</button></div></div>
         <div class="form-error" id="formError" role="alert"></div>
@@ -181,9 +183,10 @@
       <form class="setup-add-form" id="workspaceForm"><input id="workspaceName" type="text" maxlength="50" placeholder="เช่น XAUUSD Retest, NQ Scalping" autocomplete="off" required><button class="primary-button" type="submit">＋ สร้างโปรเจกต์</button></form>
       <div class="setup-list-heading"><span>โปรเจกต์ของฉัน</span><span id="workspaceCount"></span></div>
       <div class="setup-list workspace-list" id="workspaceRows"></div>
-      <div class="setup-footnote">ลบโปรเจกต์จะลบรายการเทรดและ Setup ของโปรเจกต์นั้นออกจากเบราว์เซอร์นี้อย่างถาวร</div>
+      <div class="setup-footnote">ลบโปรเจกต์จะลบรายการเทรดใน Supabase และ Setup ที่บันทึกไว้ในเบราว์เซอร์นี้อย่างถาวร</div>
     </section>
   </div>
+  <div class="trades-loading" id="tradesLoading" role="status" aria-live="polite" hidden><span class="trades-spinner" aria-hidden="true"></span><span>Loading...</span></div>
   <div class="modal-backdrop image-viewer-backdrop" id="imageViewer" aria-hidden="true">
     <section class="image-viewer-modal" role="dialog" aria-modal="true" aria-labelledby="imageViewerTitle"><div class="modal-header"><div><div class="eyebrow">TRADE CHARTS</div><h2 id="imageViewerTitle">ภาพประกอบรายการเทรด</h2></div><button class="close-button" id="closeImageViewer" aria-label="ปิด">×</button></div><div class="image-viewer-grid" id="imageViewerGrid"></div></section>
   </div>
@@ -192,6 +195,38 @@
       <div class="confirm-heading"><span class="confirm-icon">!</span><div><div class="eyebrow">CONFIRM ACTION</div><h2 id="confirmTitle">ยืนยันการลบ</h2></div></div>
       <p class="confirm-message" id="confirmMessage"></p><p class="confirm-detail" id="confirmDetail"></p>
       <div class="modal-actions"><button class="secondary-button" id="confirmCancel" type="button">ยกเลิก</button><button class="danger-confirm-button" id="confirmAccept" type="button"><span>⌫</span><span id="confirmAcceptLabel">ลบรายการ</span></button></div>
+    </section>
+  </div>
+  <div class="auth-startup" id="authStartup" role="status" aria-live="polite">
+    <span class="auth-spinner" aria-hidden="true"></span>
+    <small>Loading...</small>
+  </div>
+  <div class="login-backdrop" id="loginBackdrop" hidden>
+    <section class="login-modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle" aria-describedby="loginDescription">
+      <a class="brand login-brand" href="#overview" aria-label="Redline Trading Journal">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span><strong>REDLINE</strong><small>TRADING JOURNAL</small></span>
+      </a>
+      <div class="login-heading">
+        <div class="eyebrow"><span class="live-dot"></span> YOUR TRADING WORKSPACE</div>
+        <h1 id="loginTitle">ยินดีต้อนรับกลับ</h1>
+        <p id="loginDescription">เข้าสู่ระบบเพื่อไปยัง Trading Journal ของคุณ</p>
+      </div>
+      <form class="login-form" id="loginForm" hidden>
+        <label class="login-field" for="loginEmail">Email
+          <input id="loginEmail" name="email" type="email" autocomplete="email" placeholder="name@example.com" required autofocus>
+        </label>
+        <label class="login-field" for="loginPassword">Password
+          <span class="login-password-control">
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="กรอกรหัสผ่าน" required>
+            <button type="button" class="login-password-toggle" id="toggleLoginPassword" aria-label="แสดงรหัสผ่าน" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="m4 4 16 16"/></svg>
+            </button>
+          </span>
+        </label>
+        <button class="primary-button login-submit" type="submit">เข้าสู่ระบบ <span>→</span></button>
+      </form>
+      <p class="login-status" id="loginStatus" role="status" aria-live="polite">กำลังตรวจสอบ session…</p>
     </section>
   </div>
   <div class="toast" id="toast" role="status"></div>

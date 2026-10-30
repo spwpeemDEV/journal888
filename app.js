@@ -1,19 +1,23 @@
 (() => {
   'use strict';
 
-  const STORAGE_KEY = 'redline-trading-journal:v1';
   const SETUP_STORAGE_KEY = 'redline-trading-journal:setups:v1';
   const POI_STORAGE_KEY = 'redline-trading-journal:pois:v1';
   const SETTINGS_STORAGE_KEY = 'redline-trading-journal:settings:v1';
   const WORKSPACES_STORAGE_KEY = 'redline-trading-journal:workspaces:v1';
   const ACTIVE_WORKSPACE_KEY = 'redline-trading-journal:active-workspace:v1';
   const PROJECT_DATA_PREFIX = 'redline-trading-journal:project:v1:';
+  const supabaseClient = window.supabase?.createClient && window.REDLINE_SUPABASE_CONFIG
+    ? window.supabase.createClient(window.REDLINE_SUPABASE_CONFIG.url, window.REDLINE_SUPABASE_CONFIG.publishableKey, {
+      auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true }
+    })
+    : null;
   const FUTURES = { GC: 100, MGC: 10, NQ: 20, MNQ: 2 };
   const DEFAULT_SETUPS = ['Breakout', 'Pullback', 'Reversal', 'Trend following', 'Range', 'อื่น ๆ'];
   const DEFAULT_POIS = ['PDH / PDL', 'FVG', 'Order Block', 'Liquidity sweep', 'Support / Resistance', 'VWAP', 'Opening range', 'อื่น ๆ'];
   const $ = (id) => document.getElementById(id);
   let workspaces = loadWorkspaces();
-  if (!workspaces.length) workspaces = [{ id: 'journal-default', name: 'My Journal', tradeCount: loadTrades().length }];
+  if (!workspaces.length) workspaces = [{ id: 'journal-default', name: 'My Journal', tradeCount: 0 }];
   let activeWorkspaceId = localStorage.getItem(ACTIVE_WORKSPACE_KEY) || workspaces[0].id;
   if (!workspaces.some((workspace) => workspace.id === activeWorkspaceId)) activeWorkspaceId = workspaces[0].id;
   let trades = loadWorkspaceTrades(activeWorkspaceId);
@@ -32,13 +36,29 @@
   let confirmResolver = null;
   let toastTimer;
   let chartMode = 'pnl';
+  let activeWorkspaceUserId = null;
+  let workspaceLoadGeneration = 0;
+  let tradeFetchGeneration = 0;
+  const loadingOperations = new Set();
+  const tradeFetchesInFlight = new Set();
 
-  function loadTrades() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      return Array.isArray(saved) ? saved : [];
-    } catch { return []; }
+  function syncLoadingOverlay() {
+    const isLoading = loadingOperations.size > 0;
+    $('tradesLoading').hidden = !isLoading;
+    document.body.classList.toggle('app-busy', isLoading);
+    $('journal').setAttribute('aria-busy', String(isLoading));
   }
+  function beginLoadingOperation() {
+    const token = Symbol('loading-operation');
+    loadingOperations.add(token);
+    syncLoadingOverlay();
+    return token;
+  }
+  function endLoadingOperation(token) {
+    loadingOperations.delete(token);
+    syncLoadingOverlay();
+  }
+
   function loadSetups() {
     try {
       const saved = JSON.parse(localStorage.getItem(SETUP_STORAGE_KEY) || 'null');
@@ -58,7 +78,6 @@
   }
   function projectDataKey(id, kind) {
     if (id === 'journal-default') {
-      if (kind === 'trades') return STORAGE_KEY;
       if (kind === 'setups') return SETUP_STORAGE_KEY;
       if (kind === 'pois') return POI_STORAGE_KEY;
       if (kind === 'settings') return SETTINGS_STORAGE_KEY;
@@ -66,11 +85,7 @@
     return `${PROJECT_DATA_PREFIX}${encodeURIComponent(id)}:${kind}`;
   }
   function loadWorkspaceTrades(id) {
-    if (id === 'journal-default') return loadTrades();
-    try {
-      const saved = JSON.parse(localStorage.getItem(projectDataKey(id, 'trades')) || '[]');
-      return Array.isArray(saved) ? saved : [];
-    } catch { return []; }
+    return workspaces.find((workspace) => workspace.id === id)?.tradeRecords || [];
   }
   function loadWorkspaceSetups(id) {
     if (id === 'journal-default') return loadSetups();
@@ -98,6 +113,88 @@
     try {
       return normalizeSettings(JSON.parse(localStorage.getItem(projectDataKey(id, 'settings')) || 'null'));
     } catch { return normalizeSettings(); }
+  }
+  function workspaceFromRow(row) {
+    return {
+      id: row.id,
+      name: row.name,
+      tradeCount: null,
+      tradeRecords: [],
+      defaultRisk: row.default_risk == null ? '' : String(row.default_risk),
+      defaultSetup: row.default_setup || '',
+      defaultPoi: row.default_poi || ''
+    };
+  }
+  function tradeFromRow(row) {
+    return {
+      id: row.id,
+      missedEntry: row.missed_entry,
+      instrument: row.instrument,
+      date: row.trade_date,
+      time: row.trade_time || '',
+      session: row.session || '',
+      direction: row.direction,
+      quantity: row.quantity == null ? null : Number(row.quantity),
+      entry: Number(row.entry),
+      exit: row.exit == null ? null : Number(row.exit),
+      stop: Number(row.stop),
+      target: Number(row.target),
+      riskBudget: row.risk_budget == null ? null : Number(row.risk_budget),
+      maxRR: row.max_rr == null ? null : Number(row.max_rr),
+      fees: row.fees == null ? 0 : Number(row.fees),
+      cfdMultiplier: row.cfd_multiplier == null ? '' : Number(row.cfd_multiplier),
+      setup: row.setup || '',
+      poi: row.poi || '',
+      followedPlan: row.followed_plan || 'yes',
+      notes: row.notes || '',
+      chartUrlHtf: row.chart_url_htf || '',
+      chartUrlLtf: row.chart_url_ltf || '',
+      chartUrl: row.chart_url_ltf || row.chart_url_htf || '',
+      images: []
+    };
+  }
+  function tradeToRow(trade, workspaceId = activeWorkspaceId) {
+    return {
+      id: trade.id,
+      user_id: activeWorkspaceUserId,
+      workspace_id: workspaceId,
+      missed_entry: Boolean(trade.missedEntry),
+      instrument: trade.instrument,
+      trade_date: trade.date,
+      trade_time: trade.time || null,
+      session: trade.session || null,
+      direction: trade.direction,
+      quantity: trade.quantity == null ? null : trade.quantity,
+      entry: trade.entry,
+      exit: trade.exit == null ? null : trade.exit,
+      stop: trade.stop,
+      target: trade.target,
+      risk_budget: trade.riskBudget == null ? null : trade.riskBudget,
+      max_rr: trade.maxRR == null ? null : trade.maxRR,
+      fees: trade.missedEntry ? null : trade.fees,
+      cfd_multiplier: trade.cfdMultiplier === '' ? null : trade.cfdMultiplier,
+      setup: trade.setup || null,
+      poi: trade.poi || null,
+      followed_plan: trade.followedPlan || 'yes',
+      notes: trade.notes || null,
+      chart_url_htf: trade.chartUrlHtf || null,
+      chart_url_ltf: trade.chartUrlLtf || null
+    };
+  }
+  function settingsForWorkspace(workspace) {
+    if (!workspace) return normalizeSettings();
+    return normalizeSettings({
+      defaultRisk: workspace.defaultRisk,
+      defaultSetup: workspace.defaultSetup,
+      defaultPoi: workspace.defaultPoi
+    });
+  }
+  function workspaceSettingsPayload(value = settings) {
+    return {
+      default_risk: value.defaultRisk === '' ? null : Number(value.defaultRisk),
+      default_setup: value.defaultSetup || null,
+      default_poi: value.defaultPoi || null
+    };
   }
   function buildDemoTrade({ projectId, index, style, setups: demoSetups, pois: demoPois }) {
     const instruments = ['XAUUSD', 'GC', 'NQ', 'MGC'];
@@ -154,7 +251,7 @@
   }
   function workspaceTradeRecords(workspace) {
     if (workspace?.id === activeWorkspaceId) return trades;
-    return workspaceData(workspace)?.trades || loadWorkspaceTrades(workspace?.id);
+    return workspaceData(workspace)?.trades || workspace?.tradeRecords || [];
   }
   function workspaceTradeCount(workspace) {
     return workspace?.id === activeWorkspaceId ? trades.length : (workspace?.tradeCount ?? workspaceTradeRecords(workspace).length);
@@ -232,36 +329,189 @@
   function persistWorkspaceState() {
     const active = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
     if (active) {
-      localStorage.setItem(projectDataKey(activeWorkspaceId, 'trades'), JSON.stringify(trades));
       localStorage.setItem(projectDataKey(activeWorkspaceId, 'setups'), JSON.stringify(setups));
       localStorage.setItem(projectDataKey(activeWorkspaceId, 'pois'), JSON.stringify(pois));
       localStorage.setItem(projectDataKey(activeWorkspaceId, 'settings'), JSON.stringify(settings));
+      active.tradeRecords = trades;
       active.tradeCount = trades.length;
     }
-    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.map(({ id, name, tradeCount }) => ({ id, name, tradeCount }))));
+    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.map(({ id, name }) => ({ id, name }))));
     localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
   }
-  function persist() { persistWorkspaceState(); }
+  function setActiveTrades(nextTrades) {
+    tradeFetchGeneration += 1;
+    trades = nextTrades;
+    const active = activeWorkspace();
+    if (active) {
+      active.tradeRecords = trades;
+      active.tradeCount = trades.length;
+    }
+  }
+  async function saveTradeRows(rows) {
+    if (!supabaseClient || !activeWorkspaceUserId || !activeWorkspaceId) throw new Error('ไม่พบ session หรือ workspace ที่กำลังใช้งาน');
+    if (!rows.length) return [];
+    tradeFetchGeneration += 1;
+    const { data, error } = await supabaseClient.from('trades')
+      .upsert(rows.map((trade) => tradeToRow(trade)), { onConflict: 'id' })
+      .select('*');
+    if (error) throw error;
+    return (data || []).map(tradeFromRow);
+  }
+  async function refreshActiveTrades(workspaceId) {
+    if (!supabaseClient || !activeWorkspaceUserId || !workspaceId) return;
+    if (tradeFetchesInFlight.has(workspaceId)) return;
+    tradeFetchesInFlight.add(workspaceId);
+    const generation = ++tradeFetchGeneration;
+    const userId = activeWorkspaceUserId;
+    const loadingToken = beginLoadingOperation();
+    try {
+      const { data, error } = await supabaseClient.from('trades')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .order('trade_date', { ascending: false })
+        .order('trade_time', { ascending: false });
+      if (generation !== tradeFetchGeneration || workspaceId !== activeWorkspaceId || userId !== activeWorkspaceUserId) return;
+      if (error) { toast(`โหลดรายการเทรดไม่สำเร็จ: ${error.message}`); return; }
+      const records = (data || []).map(tradeFromRow);
+      const workspace = workspaces.find((item) => item.id === workspaceId);
+      if (!workspace) return;
+      workspace.tradeRecords = records;
+      workspace.tradeCount = records.length;
+      trades = records;
+      render();
+    } catch (error) {
+      if (generation === tradeFetchGeneration) toast(`โหลดรายการเทรดไม่สำเร็จ: ${error.message || 'ตรวจสอบการเชื่อมต่อ'}`);
+    } finally {
+      tradeFetchesInFlight.delete(workspaceId);
+      endLoadingOperation(loadingToken);
+    }
+  }
+  async function saveActiveWorkspaceSettings() {
+    const active = activeWorkspace();
+    if (!supabaseClient || !active) throw new Error('ไม่พบโปรเจกต์ที่กำลังใช้งาน');
+    const { data, error } = await supabaseClient.from('workspaces')
+      .update(workspaceSettingsPayload())
+      .eq('id', active.id)
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('ไม่พบ workspace หรือไม่มีสิทธิ์แก้ไข');
+    active.defaultRisk = settings.defaultRisk;
+    active.defaultSetup = settings.defaultSetup;
+    active.defaultPoi = settings.defaultPoi;
+  }
+  async function loadUserWorkspaces(user, generation) {
+    let { data: rows, error } = await supabaseClient.from('workspaces').select('*').order('created_at', { ascending: true });
+    if (error) throw error;
+    if (generation !== workspaceLoadGeneration || activeWorkspaceUserId !== user.id) return;
+    workspaces = rows.map(workspaceFromRow);
+    const { data: tradeRows, error: tradeError } = await supabaseClient.from('trades')
+      .select('*')
+      .order('trade_date', { ascending: false })
+      .order('trade_time', { ascending: false });
+    if (tradeError) throw tradeError;
+    if (generation !== workspaceLoadGeneration || activeWorkspaceUserId !== user.id) return;
+    const tradesByWorkspace = new Map(workspaces.map((workspace) => [workspace.id, []]));
+    (tradeRows || []).forEach((row) => {
+      const records = tradesByWorkspace.get(row.workspace_id);
+      if (records) records.push(tradeFromRow(row));
+    });
+    workspaces.forEach((workspace) => {
+      workspace.tradeRecords = tradesByWorkspace.get(workspace.id) || [];
+      workspace.tradeCount = workspace.tradeRecords.length;
+    });
+    const previousId = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
+    activeWorkspaceId = workspaces.some((workspace) => workspace.id === previousId)
+      ? previousId
+      : workspaces[0]?.id || '';
+    if (activeWorkspaceId) {
+      trades = loadWorkspaceTrades(activeWorkspaceId);
+      setups = loadWorkspaceSetups(activeWorkspaceId);
+      pois = loadWorkspacePois(activeWorkspaceId);
+      settings = settingsForWorkspace(activeWorkspace());
+    } else {
+      trades = [];
+      setups = [...DEFAULT_SETUPS];
+      pois = [...DEFAULT_POIS];
+      settings = normalizeSettings();
+    }
+    if (activeWorkspace()) persistWorkspaceState();
+    renderSetupOptions();
+    renderPoiOptions();
+    renderSetupManager();
+    renderWorkspaceControls();
+    render();
+    return workspaces.length === 0;
+  }
+  async function handleAuthSession(session) {
+    const user = session?.user;
+    if (!user) {
+      workspaceLoadGeneration += 1;
+      tradeFetchGeneration += 1;
+      activeWorkspaceUserId = null;
+      document.body.classList.add('auth-locked');
+      $('authStartup').hidden = true;
+      $('loginBackdrop').hidden = false;
+      $('loginForm').hidden = false;
+      $('loginStatus').textContent = 'เข้าสู่ระบบด้วย Email และ Password';
+      $('loginStatus').classList.remove('login-status-ready');
+      return;
+    }
+    if (activeWorkspaceUserId === user.id) return;
+    activeWorkspaceUserId = user.id;
+    const generation = ++workspaceLoadGeneration;
+    document.body.classList.add('auth-locked');
+    $('authStartup').hidden = false;
+    $('loginBackdrop').hidden = true;
+    $('loginForm').hidden = true;
+    $('loginStatus').textContent = 'กำลังโหลดโปรเจกต์จาก Supabase…';
+    $('loginStatus').classList.remove('login-status-ready');
+    try {
+      const needsWorkspace = await loadUserWorkspaces(user, generation);
+      if (generation !== workspaceLoadGeneration || activeWorkspaceUserId !== user.id) return;
+      $('signedInEmail').textContent = user.email || 'ผู้ใช้งาน';
+      document.body.classList.remove('auth-locked');
+      $('authStartup').hidden = true;
+      $('loginBackdrop').hidden = true;
+      if (needsWorkspace) {
+        switchView('projects');
+        openWorkspaceManager();
+      }
+    } catch (error) {
+      if (generation !== workspaceLoadGeneration) return;
+      activeWorkspaceUserId = null;
+      $('authStartup').hidden = true;
+      $('loginBackdrop').hidden = false;
+      $('loginForm').hidden = false;
+      $('loginStatus').textContent = `โหลดโปรเจกต์ไม่สำเร็จ: ${error.message || 'ตรวจสอบตาราง workspaces และ RLS policy'}`;
+      $('loginStatus').classList.add('login-status-ready');
+    }
+  }
   function persistSetups() { persistWorkspaceState(); }
   if (!localStorage.getItem(WORKSPACES_STORAGE_KEY)) {
     try {
-      localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.map(({ id, name, tradeCount }) => ({ id, name, tradeCount }))));
+      localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.map(({ id, name }) => ({ id, name }))));
       localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
     } catch { /* Keep legacy records readable even if the browser cannot add workspace metadata yet. */ }
   }
   function activeWorkspace() { return workspaces.find((workspace) => workspace.id === activeWorkspaceId); }
   function renderWorkspaceControls() {
     const active = activeWorkspace();
+    const fallbackName = workspaces.length ? 'My Journal' : 'ยังไม่มีโปรเจกต์';
     $('workspaceSelect').innerHTML = workspaces.map((workspace) => `<option value="${escapeHtml(workspace.id)}">${escapeHtml(workspace.name)}</option>`).join('');
     $('workspaceSelect').value = activeWorkspaceId;
-    $('sidebarProjectName').textContent = active?.name || 'My Journal';
-    $('activeWorkspaceLabel').textContent = active?.name || 'My Journal';
+    $('sidebarProjectName').textContent = active?.name || fallbackName;
+    $('activeWorkspaceLabel').textContent = active?.name || fallbackName;
     $('workspaceCount').textContent = `${workspaces.length} โปรเจกต์`;
     $('workspaceRows').innerHTML = workspaces.map((workspace) => `<div class="workspace-row${workspace.id === activeWorkspaceId ? ' active' : ''}"><button type="button" class="workspace-row-select" data-select-workspace="${escapeHtml(workspace.id)}"><strong>${escapeHtml(workspace.name)}</strong><small>${workspaceTradeCount(workspace)} รายการเทรด${workspace.id === activeWorkspaceId ? ' · กำลังใช้งาน' : ''}</small></button><div class="workspace-row-actions"><button type="button" data-rename-workspace="${escapeHtml(workspace.id)}">เปลี่ยนชื่อ</button>${workspaces.length > 1 ? `<button type="button" class="delete-setup" data-delete-workspace="${escapeHtml(workspace.id)}">ลบ</button>` : ''}</div></div>`).join('');
     renderProjectsView();
   }
   function renderProjectsView() {
     $('projectsCount').textContent = `${workspaces.length} โปรเจกต์`;
+    if (!workspaces.length) {
+      $('projectsGrid').innerHTML = '<div class="empty-state project-empty-state"><div class="empty-icon">▦</div><strong>ยังไม่มีโปรเจกต์</strong><p>สร้างโปรเจกต์แรกเพื่อเริ่มบันทึกเทรดและตั้งค่าพื้นที่ทำงานของคุณ</p><button type="button" class="primary-button" data-open-project-form><span>＋</span> สร้างโปรเจกต์แรก</button></div>';
+      return;
+    }
     $('projectsGrid').innerHTML = workspaces.map((workspace) => {
       const stats = workspaceStats(workspace);
       const setupCount = workspaceData(workspace)?.setups.length ?? loadWorkspaceSetups(workspace.id).length;
@@ -272,7 +522,8 @@
   }
   function switchWorkspace(id) {
     if (demoMode && demoPortfolioMode) { switchDemoWorkspace(id); return; }
-    if (!workspaces.some((workspace) => workspace.id === id) || id === activeWorkspaceId) return;
+    if (!workspaces.some((workspace) => workspace.id === id)) return;
+    if (id === activeWorkspaceId) return;
     resetSetupEditor();
     pendingDeleteIds.clear();
     if (demoMode) {
@@ -281,12 +532,13 @@
       $('demoButtonLabel').textContent = 'ข้อมูลตัวอย่าง';
       $('demoButton').classList.remove('demo-active');
     }
+    tradeFetchGeneration += 1;
     activeWorkspaceId = id;
     const active = activeWorkspace();
     trades = loadWorkspaceTrades(activeWorkspaceId);
     setups = loadWorkspaceSetups(activeWorkspaceId);
     pois = loadWorkspacePois(activeWorkspaceId);
-    settings = loadWorkspaceSettings(activeWorkspaceId);
+    settings = settingsForWorkspace(active);
     localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
     $('searchTrades').value = '';
     $('periodFilter').value = 'all';
@@ -295,6 +547,7 @@
     renderSetupManager();
     renderWorkspaceControls();
     render();
+    void refreshActiveTrades(activeWorkspaceId);
     toast(`เปิดโปรเจกต์ “${active.name}” แล้ว`);
   }
   function closeWorkspaceManager() {
@@ -309,20 +562,36 @@
     $('workspaceManager').setAttribute('aria-hidden', 'false');
     $('workspaceName').focus();
   }
-  function createWorkspace(event) {
+  async function createWorkspace(event) {
     event.preventDefault();
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนจึงสร้างโปรเจกต์ได้'); return; }
     const name = $('workspaceName').value.trim();
     if (!name) return;
     if (workspaces.some((workspace) => workspace.name.toLocaleLowerCase() === name.toLocaleLowerCase())) { toast('มีชื่อโปรเจกต์นี้แล้ว'); return; }
-    const workspace = { id: crypto.randomUUID?.() || `journal-${Date.now()}-${Math.random().toString(16).slice(2)}`, name, tradeCount: 0 };
-    workspaces.push(workspace);
-    try { persistWorkspaceState(); }
-    catch { workspaces.pop(); toast('สร้างโปรเจกต์ไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม'); return; }
-    $('workspaceName').value = '';
-    switchWorkspace(workspace.id);
-    renderWorkspaceControls();
-    toast(`สร้างโปรเจกต์ “${name}” แล้ว`);
+    const submitButton = $('workspaceForm').querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    const loadingToken = beginLoadingOperation();
+    try {
+      const { data, error } = await supabaseClient.from('workspaces').insert({ name }).select('*').single();
+      if (error) throw error;
+      const workspace = workspaceFromRow(data);
+      workspaces.push(workspace);
+      try { persistWorkspaceState(); }
+      catch {
+        workspaces.pop();
+        await supabaseClient.from('workspaces').delete().eq('id', workspace.id);
+        throw new Error('พื้นที่จัดเก็บการตั้งค่าในเบราว์เซอร์ไม่พร้อมใช้งาน');
+      }
+      $('workspaceName').value = '';
+      switchWorkspace(workspace.id);
+      renderWorkspaceControls();
+      toast(`สร้างโปรเจกต์ “${name}” แล้ว`);
+    } catch (error) {
+      toast(`สร้างโปรเจกต์ไม่สำเร็จ: ${error.message || 'ตรวจสอบการเชื่อมต่อและสิทธิ์'}`);
+    } finally {
+      submitButton.disabled = false;
+      endLoadingOperation(loadingToken);
+    }
   }
   async function manageWorkspaceAction(event) {
     const selectId = event.target.closest('[data-select-workspace]')?.dataset.selectWorkspace;
@@ -336,10 +605,11 @@
       const nextName = window.prompt('ตั้งชื่อโปรเจกต์', workspace.name)?.trim();
       if (!nextName || nextName === workspace.name) return;
       if (workspaces.some((item) => item.id !== renameId && item.name.toLocaleLowerCase() === nextName.toLocaleLowerCase())) { toast('มีชื่อโปรเจกต์นี้แล้ว'); return; }
-      const previousName = workspace.name;
-      workspace.name = nextName;
+      const { data, error } = await supabaseClient.from('workspaces').update({ name: nextName }).eq('id', renameId).select('*').maybeSingle();
+      if (error || !data) { toast(`เปลี่ยนชื่อไม่สำเร็จ: ${error?.message || 'ไม่พบ workspace หรือไม่มีสิทธิ์'}`); return; }
+      workspace.name = data.name;
       try { persistWorkspaceState(); }
-      catch { workspace.name = previousName; toast('เปลี่ยนชื่อไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม'); return; }
+      catch { toast('เปลี่ยนชื่อใน Supabase แล้ว แต่บันทึกแคชในเบราว์เซอร์ไม่สำเร็จ'); }
       renderWorkspaceControls();
       toast('เปลี่ยนชื่อโปรเจกต์แล้ว');
       return;
@@ -356,39 +626,32 @@
         confirmLabel: 'ลบโปรเจกต์'
       });
       if (!confirmed) return;
-      const previousWorkspaces = workspaces;
-      const previousActiveId = activeWorkspaceId;
-      const previousTrades = trades;
-      const previousSetups = setups;
-      const previousPois = pois;
-      const previousSettings = settings;
-      workspaces = workspaces.filter((item) => item.id !== deleteId);
-      if (activeWorkspaceId === deleteId) {
-        activeWorkspaceId = workspaces[0].id;
-        trades = loadWorkspaceTrades(activeWorkspaceId);
-        setups = loadWorkspaceSetups(activeWorkspaceId);
-        pois = loadWorkspacePois(activeWorkspaceId);
-        settings = loadWorkspaceSettings(activeWorkspaceId);
+      const loadingToken = beginLoadingOperation();
+      try {
+        const { data: deleted, error: deleteError } = await supabaseClient.from('workspaces').delete().eq('id', deleteId).select('id').maybeSingle();
+        if (deleteError || !deleted) throw new Error(deleteError?.message || 'ไม่พบ workspace หรือไม่มีสิทธิ์');
+        workspaces = workspaces.filter((item) => item.id !== deleteId);
+        if (activeWorkspaceId === deleteId) {
+          activeWorkspaceId = workspaces[0].id;
+          trades = loadWorkspaceTrades(activeWorkspaceId);
+          setups = loadWorkspaceSetups(activeWorkspaceId);
+          pois = loadWorkspacePois(activeWorkspaceId);
+          settings = settingsForWorkspace(activeWorkspace());
+        }
+        try { persistWorkspaceState(); }
+        catch { toast('ลบโปรเจกต์จาก Supabase แล้ว แต่แคชการตั้งค่าในเบราว์เซอร์บันทึกไม่สำเร็จ'); }
+        localStorage.removeItem(projectDataKey(deleteId, 'setups'));
+        localStorage.removeItem(projectDataKey(deleteId, 'pois'));
+        localStorage.removeItem(projectDataKey(deleteId, 'settings'));
+        renderSetupOptions();
+        renderWorkspaceControls();
+        render();
+        toast('ลบโปรเจกต์แล้ว');
+      } catch (error) {
+        toast(`ลบโปรเจกต์ไม่สำเร็จ: ${error.message || 'ตรวจสอบการเชื่อมต่อและสิทธิ์'}`);
+      } finally {
+        endLoadingOperation(loadingToken);
       }
-      try { persistWorkspaceState(); }
-      catch {
-        workspaces = previousWorkspaces;
-        activeWorkspaceId = previousActiveId;
-        trades = previousTrades;
-        setups = previousSetups;
-        pois = previousPois;
-        settings = previousSettings;
-        toast('ลบโปรเจกต์ไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม');
-        return;
-      }
-      localStorage.removeItem(projectDataKey(deleteId, 'trades'));
-      localStorage.removeItem(projectDataKey(deleteId, 'setups'));
-      localStorage.removeItem(projectDataKey(deleteId, 'pois'));
-      localStorage.removeItem(projectDataKey(deleteId, 'settings'));
-      renderSetupOptions();
-      renderWorkspaceControls();
-      render();
-      toast('ลบโปรเจกต์แล้ว');
     }
   }
   function dateOffset(days) {
@@ -534,7 +797,7 @@
     $('saveSetupButton').setAttribute('aria-label', 'เพิ่ม Setup');
     $('cancelSetupEdit').hidden = true;
   }
-  function saveSetup(event) {
+  async function saveSetup(event) {
     event.preventDefault();
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนจึงแก้ไข Setup ได้'); return; }
     const nextName = $('setupName').value.trim();
@@ -543,10 +806,14 @@
     if (duplicate) { toast('มีชื่อ Setup นี้อยู่แล้ว'); return; }
     if (editingSetupName) {
       const oldName = editingSetupName;
+      const { error } = await supabaseClient.from('trades').update({ setup: nextName })
+        .eq('workspace_id', activeWorkspaceId).eq('setup', oldName);
+      if (error) { toast(`เปลี่ยนชื่อ Setup ในรายการเทรดไม่สำเร็จ: ${error.message}`); return; }
       setups = setups.map((name) => name === oldName ? nextName : name);
-      trades = trades.map((trade) => trade.setup === oldName ? { ...trade, setup: nextName } : trade);
-      if (settings.defaultSetup === oldName) settings.defaultSetup = nextName;
-      persist();
+      setActiveTrades(trades.map((trade) => trade.setup === oldName ? { ...trade, setup: nextName } : trade));
+      const changedDefault = settings.defaultSetup === oldName;
+      if (changedDefault) settings.defaultSetup = nextName;
+      if (changedDefault) saveActiveWorkspaceSettings().catch((error) => toast(`บันทึกค่า Setup ใน Supabase ไม่สำเร็จ: ${error.message}`));
       toast('เปลี่ยนชื่อ Setup แล้ว');
     } else {
       setups.push(nextName);
@@ -566,7 +833,7 @@
     $('savePoiButton').setAttribute('aria-label', 'เพิ่ม POI');
     $('cancelPoiEdit').hidden = true;
   }
-  function savePoi(event) {
+  async function savePoi(event) {
     event.preventDefault();
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนจึงแก้ไข POI ได้'); return; }
     const nextName = $('poiName').value.trim();
@@ -575,10 +842,15 @@
     if (duplicate) { toast('มีชื่อ POI นี้อยู่แล้ว'); return; }
     if (editingPoiName) {
       const oldName = editingPoiName;
+      const { error } = await supabaseClient.from('trades').update({ poi: nextName })
+        .eq('workspace_id', activeWorkspaceId).eq('poi', oldName);
+      if (error) { toast(`เปลี่ยนชื่อ POI ในรายการเทรดไม่สำเร็จ: ${error.message}`); return; }
       pois = pois.map((name) => name === oldName ? nextName : name);
-      trades = trades.map((trade) => trade.poi === oldName ? { ...trade, poi: nextName } : trade);
-      if (settings.defaultPoi === oldName) settings.defaultPoi = nextName;
+      setActiveTrades(trades.map((trade) => trade.poi === oldName ? { ...trade, poi: nextName } : trade));
+      const changedDefault = settings.defaultPoi === oldName;
+      if (changedDefault) settings.defaultPoi = nextName;
       toast('เปลี่ยนชื่อ POI แล้ว');
+      if (changedDefault) saveActiveWorkspaceSettings().catch((error) => toast(`บันทึกค่า POI ใน Supabase ไม่สำเร็จ: ${error.message}`));
     } else {
       pois.push(nextName);
       toast('เพิ่ม POI แล้ว');
@@ -590,7 +862,7 @@
     resetPoiEditor();
     $('poiName').focus();
   }
-  function saveSettings(event) {
+  async function saveSettings(event) {
     event.preventDefault();
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนจึงแก้ไขค่าเริ่มต้นได้'); return; }
     const defaultRisk = $('defaultRisk').value.trim();
@@ -599,18 +871,25 @@
       $('defaultRisk').focus();
       return;
     }
-    settings = {
+    const nextSettings = {
       defaultRisk,
       defaultSetup: $('defaultSetup').value,
       defaultPoi: $('defaultPoi').value
     };
+    const previousSettings = settings;
+    settings = nextSettings;
+    try { await saveActiveWorkspaceSettings(); }
+    catch (error) { settings = previousSettings; toast(`บันทึกค่าเริ่มต้นใน Supabase ไม่สำเร็จ: ${error.message}`); return; }
     persistWorkspaceState();
     renderDefaultSettings();
     toast('บันทึกค่าเริ่มต้นแล้ว');
   }
-  function clearDefaultSettings() {
+  async function clearDefaultSettings() {
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนจึงล้างค่าเริ่มต้นได้'); return; }
+    const previousSettings = settings;
     settings = normalizeSettings();
+    try { await saveActiveWorkspaceSettings(); }
+    catch (error) { settings = previousSettings; toast(`ล้างค่าเริ่มต้นใน Supabase ไม่สำเร็จ: ${error.message}`); return; }
     persistWorkspaceState();
     renderDefaultSettings();
     toast('ล้างค่าเริ่มต้นแล้ว');
@@ -858,7 +1137,7 @@
     $('session').value = trade?.session || '';
     $('quantity').value = trade?.quantity ?? (trade?.instrument === 'XAUUSD' || !trade ? 0.01 : 1);
     $('riskBudget').value = trade?.riskBudget ?? (recordType === 'missed' ? '' : settings.defaultRisk);
-    $('riskSizingFeedback').textContent = 'ใส่ Risk, Entry และ SL ก่อนคำนวณ · ค่าธรรมเนียมและ slippage ยังไม่รวม';
+    $('riskSizingFeedback').textContent = 'ใส่ Risk, Entry และ SL เพื่อคำนวณจำนวนอัตโนมัติ · ค่าธรรมเนียมและ slippage ยังไม่รวม';
     $('riskSizingFeedback').classList.remove('error', 'calculated');
     $('entryPrice').value = trade?.entry ?? '';
     $('exitPrice').value = trade?.exit ?? '';
@@ -881,25 +1160,12 @@
     updateRecordMode();
     updateInstrumentField();
     updatePreview();
-    updateChartUrlPreview();
     $('instrument').focus();
   }
   function closeModal() {
     $('tradeModal').classList.remove('open');
     $('tradeModal').setAttribute('aria-hidden', 'true');
     setupReturnToTrade = false;
-  }
-  function updateChartUrlPreview() {
-    const host = $('chartUrlPreview');
-    const links = [
-      ['HTF', safeHttpsUrl($('chartUrlHtf').value)],
-      ['LTF', safeHttpsUrl($('chartUrlLtf').value)]
-    ].filter(([, url]) => url);
-    if (!links.length) { host.hidden = true; host.innerHTML = ''; return; }
-    host.hidden = false;
-    host.innerHTML = links.map(([label, url]) => isDirectImageUrl(url)
-      ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><strong>${label}</strong><img src="${escapeHtml(url)}" alt="ตัวอย่างภาพ ${label}"><span>เปิดภาพต้นฉบับ ↗</span></a>`
-      : `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><strong>${label}</strong><span>เปิดลิงก์ TradingView ↗</span></a>`).join('');
   }
   function showTradeImages(trade) {
     const images = (Array.isArray(trade.images) ? trade.images : []).filter((src) => typeof src === 'string' && src.startsWith('data:image/'));
@@ -1031,7 +1297,7 @@
   function markRiskSizingStale() {
     const feedback = $('riskSizingFeedback');
     if (feedback.classList.contains('calculated')) {
-      feedback.textContent = 'ค่า Entry, SL, Risk หรือสินทรัพย์เปลี่ยนแล้ว — กดคำนวณจำนวนอีกครั้ง';
+      feedback.textContent = 'ค่า Entry, SL, Risk หรือสินทรัพย์เปลี่ยนแล้ว — ออกจากช่อง Risk เพื่อคำนวณจำนวนใหม่';
       feedback.classList.remove('calculated');
     }
     feedback.classList.remove('error');
@@ -1121,14 +1387,18 @@
       confirmLabel: 'ลบทั้งหมด'
     });
     if (!confirmed) return;
+    const loadingToken = beginLoadingOperation();
     try {
-      trades = [];
+      const { error } = await supabaseClient.from('trades').delete().eq('workspace_id', activeWorkspaceId);
+      if (error) throw error;
+      setActiveTrades([]);
       pendingDeleteIds.clear();
-      persist();
       render();
       toast('ล้างรายการเทรดทั้งหมดแล้ว');
-    } catch {
-      toast('ล้างข้อมูลไม่สำเร็จ ลองอีกครั้ง');
+    } catch (error) {
+      toast(`ล้างข้อมูลไม่สำเร็จ: ${error.message || 'ตรวจสอบ RLS policy'}`);
+    } finally {
+      endLoadingOperation(loadingToken);
     }
   }
   async function deleteSelectedTrades() {
@@ -1142,20 +1412,64 @@
       confirmLabel: 'ลบรายการ'
     });
     if (!confirmed) return;
+    const loadingToken = beginLoadingOperation();
     try {
+      const { data: deleted, error } = await supabaseClient.from('trades').delete()
+        .eq('workspace_id', activeWorkspaceId).in('id', selectedIds).select('id');
+      if (error) throw error;
+      if ((deleted || []).length !== selectedIds.length) throw new Error('ลบบางรายการไม่สำเร็จหรือไม่มีสิทธิ์');
       const selected = new Set(selectedIds);
-      trades = trades.filter((trade) => !selected.has(trade.id));
+      setActiveTrades(trades.filter((trade) => !selected.has(trade.id)));
       pendingDeleteIds.clear();
-      persist();
       render();
       toast(`ลบ ${selectedIds.length} รายการแล้ว`);
-    } catch {
-      toast('ลบรายการไม่สำเร็จ ลองอีกครั้ง');
+    } catch (error) {
+      toast(`ลบรายการไม่สำเร็จ: ${error.message || 'ตรวจสอบ RLS policy'}`);
+    } finally {
+      endLoadingOperation(loadingToken);
     }
   }
-  function onSubmit(event) {
+  function clearTradeFieldErrors() {
+    document.querySelectorAll('#tradeForm .field-error').forEach((error) => error.remove());
+    document.querySelectorAll('#tradeForm .field.invalid').forEach((field) => field.classList.remove('invalid'));
+  }
+  function clearTradeFieldError(input) {
+    const field = input.closest('.field');
+    if (!field) return;
+    field.classList.remove('invalid');
+    field.querySelector('.field-error')?.remove();
+  }
+  function validateRequiredTradeFields() {
+    const messages = {
+      tradeDate: 'กรุณาเลือกวันเทรด',
+      quantity: 'กรุณากรอกจำนวน lot หรือสัญญา',
+      cfdMultiplier: 'กรุณากรอกมูลค่าต่อจุดตาม broker',
+      entryPrice: 'กรุณากรอกราคา Entry',
+      stopPrice: 'กรุณากรอกราคา Stop Loss',
+      targetPrice: 'กรุณากรอกราคา Take Profit',
+      exitPrice: 'กรุณากรอกราคาออกจริง'
+    };
+    const invalidInputs = [...$('tradeForm').querySelectorAll('[required]')]
+      .filter((input) => input.required && !input.value.trim());
+    invalidInputs.forEach((input) => {
+      const field = input.closest('.field');
+      if (!field) return;
+      field.classList.add('invalid');
+      const message = document.createElement('small');
+      message.className = 'field-error';
+      message.setAttribute('role', 'alert');
+      message.textContent = messages[input.id] || 'กรุณากรอกข้อมูลนี้';
+      input.insertAdjacentElement('afterend', message);
+    });
+    invalidInputs[0]?.focus();
+    return invalidInputs.length === 0;
+  }
+  async function onSubmit(event) {
     event.preventDefault();
+    clearTradeFieldErrors();
+    $('formError').textContent = '';
     const missedEntry = $('recordType').value === 'missed';
+    if (!validateRequiredTradeFields()) return;
     const riskBudgetRaw = $('riskBudget').value;
     const maxRRRaw = $('maxRR').value.trim();
     if (!missedEntry && riskBudgetRaw !== '' && (!Number.isFinite(Number(riskBudgetRaw)) || Number(riskBudgetRaw) <= 0)) { $('formError').textContent = 'Risk ต้องเป็นจำนวนเงินมากกว่า 0 หรือเว้นว่างไว้'; return; }
@@ -1198,17 +1512,24 @@
       }
     }
     const existingIndex = trades.findIndex((item) => item.id === trade.id);
-    const updatedTrades = [...trades];
-    if (existingIndex >= 0) updatedTrades[existingIndex] = trade; else updatedTrades.push(trade);
+    const submitButton = $('saveTradeButton');
+    submitButton.disabled = true;
+    const originalLabel = submitButton.innerHTML;
+    submitButton.textContent = 'กำลังบันทึก…';
     try {
-      const updatedWorkspaces = workspaces.map((workspace) => workspace.id === activeWorkspaceId ? { ...workspace, tradeCount: updatedTrades.length } : workspace);
-      localStorage.setItem(projectDataKey(activeWorkspaceId, 'trades'), JSON.stringify(updatedTrades));
-      localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(updatedWorkspaces.map(({ id, name, tradeCount }) => ({ id, name, tradeCount }))));
-      localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
-      workspaces = updatedWorkspaces;
+      const [savedTrade] = await saveTradeRows([trade]);
+      if (!savedTrade) throw new Error('Supabase ไม่ส่งข้อมูลรายการที่บันทึกกลับมา');
+      const updatedTrades = [...trades];
+      if (existingIndex >= 0) updatedTrades[existingIndex] = savedTrade;
+      else updatedTrades.push(savedTrade);
+      setActiveTrades(updatedTrades);
+    } catch (error) {
+      $('formError').textContent = `บันทึกรายการไม่สำเร็จ: ${error.message || 'ตรวจสอบตาราง trades และ RLS policy'}`;
+      return;
+    } finally {
+      submitButton.disabled = false;
+      submitButton.innerHTML = originalLabel;
     }
-    catch { $('formError').textContent = 'พื้นที่จัดเก็บในเบราว์เซอร์เต็ม ลองลบภาพบางส่วนแล้วบันทึกอีกครั้ง'; return; }
-    trades = updatedTrades;
     render();
     closeModal();
     toast(existingIndex >= 0 ? 'อัปเดตรายการแล้ว' : 'บันทึกเทรดแล้ว');
@@ -1243,10 +1564,14 @@
   $('searchTrades').addEventListener('input', render);
   $('addTradeList').addEventListener('click', () => openModal());
   ['closeModal', 'cancelModal'].forEach((id) => $(id).addEventListener('click', closeModal));
-  $('tradeModal').addEventListener('click', (event) => { if (event.target === $('tradeModal')) closeModal(); });
   $('tradeForm').addEventListener('submit', onSubmit);
+  ['input', 'change'].forEach((eventName) => $('tradeForm').addEventListener(eventName, (event) => {
+    if (event.target.matches('input, select, textarea') && event.target.value.trim()) clearTradeFieldError(event.target);
+  }));
   $('instrument').addEventListener('change', () => { updateInstrumentField(); markRiskSizingStale(); });
-  $('calculateContracts').addEventListener('click', calculateContractsFromRisk);
+  $('riskBudget').addEventListener('blur', () => {
+    if ($('riskBudget').value.trim()) calculateContractsFromRisk();
+  });
   $('toggleMissedEntry').addEventListener('click', () => {
     $('recordType').value = $('recordType').value === 'missed' ? 'trade' : 'missed';
     updateRecordMode();
@@ -1294,8 +1619,6 @@
   $('confirmModal').addEventListener('click', (event) => { if (event.target === $('confirmModal')) closeConfirmModal(false); });
   $('exportButton').addEventListener('click', exportCsv);
   $('backupButton').addEventListener('click', backupJson);
-  $('chartUrlHtf').addEventListener('input', updateChartUrlPreview);
-  $('chartUrlLtf').addEventListener('input', updateChartUrlPreview);
   $('closeImageViewer').addEventListener('click', closeImageViewer);
   $('imageViewer').addEventListener('click', (event) => { if (event.target === $('imageViewer')) closeImageViewer(); });
   $('returnToTrade').addEventListener('click', () => {
@@ -1341,8 +1664,10 @@
     })) {
       if (editingSetupName === deleteName) resetSetupEditor();
       setups = setups.filter((name) => name !== deleteName);
-      if (settings.defaultSetup === deleteName) settings.defaultSetup = '';
+      const changedDefault = settings.defaultSetup === deleteName;
+      if (changedDefault) settings.defaultSetup = '';
       persistSetups();
+      if (changedDefault) saveActiveWorkspaceSettings().catch((error) => toast(`บันทึกค่า Setup ใน Supabase ไม่สำเร็จ: ${error.message}`));
       renderSetupManager();
       renderSetupOptions($('setup').value === deleteName ? '' : $('setup').value);
       toast('ลบ Setup จากตัวเลือกแล้ว');
@@ -1367,8 +1692,10 @@
     })) {
       if (editingPoiName === deleteName) resetPoiEditor();
       pois = pois.filter((name) => name !== deleteName);
-      if (settings.defaultPoi === deleteName) settings.defaultPoi = '';
+      const changedDefault = settings.defaultPoi === deleteName;
+      if (changedDefault) settings.defaultPoi = '';
       persistWorkspaceState();
+      if (changedDefault) saveActiveWorkspaceSettings().catch((error) => toast(`บันทึกค่า POI ใน Supabase ไม่สำเร็จ: ${error.message}`));
       renderSetupManager();
       renderPoiOptions($('poi').value === deleteName ? '' : $('poi').value);
       toast('ลบ POI จากตัวเลือกแล้ว');
@@ -1381,11 +1708,81 @@
     if (value !== '') { $('exitPrice').value = value; updatePreview(); }
   });
   $('menuToggle').addEventListener('click', () => $('sidebar').classList.toggle('open'));
+  $('toggleLoginPassword').addEventListener('click', () => {
+    const passwordInput = $('loginPassword');
+    const showPassword = passwordInput.type === 'password';
+    passwordInput.type = showPassword ? 'text' : 'password';
+    $('toggleLoginPassword').setAttribute('aria-pressed', String(showPassword));
+    $('toggleLoginPassword').setAttribute('aria-label', showPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน');
+    passwordInput.focus();
+  });
+  $('loginForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!supabaseClient) {
+      $('loginStatus').textContent = 'โหลด Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
+      $('loginStatus').classList.add('login-status-ready');
+      return;
+    }
+    const submitButton = $('loginForm').querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    $('loginStatus').textContent = 'กำลังเข้าสู่ระบบ…';
+    $('loginStatus').classList.remove('login-status-ready');
+    supabaseClient.auth.signInWithPassword({
+      email: $('loginEmail').value.trim(),
+      password: $('loginPassword').value
+    }).then(({ error }) => {
+      submitButton.disabled = false;
+      if (!error) return;
+      $('loginStatus').textContent = error.message === 'Invalid login credentials'
+        ? 'Email หรือ Password ไม่ถูกต้อง'
+        : error.message === 'Email not confirmed'
+          ? 'กรุณายืนยัน Email ก่อนเข้าสู่ระบบ'
+          : `เข้าสู่ระบบไม่สำเร็จ: ${error.message}`;
+      $('loginStatus').classList.add('login-status-ready');
+    }).catch(() => {
+      submitButton.disabled = false;
+      $('loginStatus').textContent = 'เชื่อมต่อ Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
+      $('loginStatus').classList.add('login-status-ready');
+    });
+  });
+  $('signOutButton').addEventListener('click', () => {
+    if (supabaseClient) supabaseClient.auth.signOut().then(({ error }) => {
+      if (error) toast(`ออกจากระบบไม่สำเร็จ: ${error.message}`);
+    });
+  });
+  if (supabaseClient) {
+    supabaseClient.auth.onAuthStateChange((_event, session) => { void handleAuthSession(session); });
+    supabaseClient.auth.getSession().then(({ data, error }) => {
+      if (error) {
+        $('authStartup').hidden = true;
+        $('loginBackdrop').hidden = false;
+        $('loginForm').hidden = false;
+        $('loginStatus').textContent = `ตรวจสอบ session ไม่สำเร็จ: ${error.message}`;
+        $('loginStatus').classList.add('login-status-ready');
+        return;
+      }
+      void handleAuthSession(data.session);
+    }).catch(() => {
+      $('authStartup').hidden = true;
+      $('loginBackdrop').hidden = false;
+      $('loginForm').hidden = false;
+      $('loginStatus').textContent = 'เชื่อมต่อ Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
+      $('loginStatus').classList.add('login-status-ready');
+    });
+  } else {
+    $('authStartup').hidden = true;
+    $('loginBackdrop').hidden = false;
+    $('loginForm').hidden = false;
+    $('loginStatus').textContent = 'โหลด Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
+    $('loginStatus').classList.add('login-status-ready');
+  }
   function viewFromHash() {
     const view = location.hash.replace(/^#/, '');
     return view || 'overview';
   }
   function switchView(view, { updateHash = true } = {}) {
+    const wasTradesView = !$('tradesView').hidden;
+    if (!workspaces.length && view !== 'projects') view = 'projects';
     const views = { overview: 'overviewView', projects: 'projectsView', trades: 'tradesView', setups: 'setupsView' };
     const labels = { overview: 'ภาพรวม', projects: 'โปรเจกต์', trades: 'รายการเทรด', setups: 'ตั้งค่า' };
     if (!views[view]) view = 'overview';
@@ -1396,6 +1793,7 @@
     updateDeleteSelectedButton();
     if (view === 'projects') renderProjectsView();
     if (view === 'setups') renderSetupManager();
+    if (view === 'trades' && !wasTradesView && !demoMode) void refreshActiveTrades(activeWorkspaceId);
   }
   function navigateFromHash() {
     switchView(viewFromHash(), { updateHash: false });
