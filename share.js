@@ -171,15 +171,17 @@
       const htfCell = htf ? `<a class="share-chart-link" href="${escapeHtml(htf)}" target="_blank" rel="noopener noreferrer">เปิด HTF ↗</a>` : '—';
       const ltfCell = ltf ? `<a class="share-chart-link" href="${escapeHtml(ltf)}" target="_blank" rel="noopener noreferrer">เปิด LTF ↗</a>` : '—';
       const sessionLabel = trade.session ? escapeHtml(trade.session) : 'ไม่ระบุ';
+      const noteText = String(trade.notes || '').trim();
+      const noteCell = `<td class="share-note-cell" title="${escapeHtml(noteText)}">${escapeHtml(noteText || '—')}</td>`;
       const common = `<td class="share-row-number">${index + 1}</td><td>${dateLabel(trade.trade_date)}<small>${escapeHtml(trade.trade_time || '—')}</small></td><td><span class="share-session-chip${trade.session ? '' : ' is-empty'}">${sessionLabel}</span></td><td><span class="share-instrument-dot"></span>${escapeHtml(trade.instrument || '—')}</td>`;
-      if (trade.missed_entry) return `<tr>${common}<td>—</td><td>—</td><td>—</td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td>—</td><td>—</td><td><span class="share-outcome">พลาดจังหวะ</span></td><td>—</td><td>—</td><td>—</td></tr>`;
+      if (trade.missed_entry) return `<tr>${common}<td>—</td><td>—</td><td>—</td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td>${noteCell}<td>—</td><td>—</td><td><span class="share-outcome">พลาดจังหวะ</span></td><td>—</td><td>—</td><td>—</td></tr>`;
       const result = compute(trade);
       const quantity = trade.quantity == null ? '—' : Number(trade.quantity).toLocaleString('en-US', { maximumFractionDigits: 2 });
       const unit = trade.instrument === 'XAUUSD' ? 'lot' : 'สัญญา';
       const side = trade.direction === 'Short' ? 'SHORT' : 'LONG';
       const maxRR = trade.max_rr == null || trade.max_rr === '' ? '—' : `${Number(trade.max_rr) >= 0 ? '+' : ''}${Number(trade.max_rr).toFixed(2)}R`;
-      return `<tr>${common}<td><span class="share-direction ${side.toLowerCase()}">${side}</span></td><td>${quantity} ${unit}</td><td><span class="share-entry-exit">${price(trade.entry)} / ${price(trade.exit)}</span><small class="share-stops">SL ${price(trade.stop)} · TP ${price(trade.target)}</small></td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td>${htfCell}</td><td>${ltfCell}</td><td><span class="share-outcome ${result.result.toLowerCase()}">${result.result}</span></td><td>${result.r == null ? '—' : `${result.r >= 0 ? '+' : ''}${result.r.toFixed(2)}R`}</td><td class="share-max-rr">${maxRR}</td><td class="${result.net >= 0 ? 'positive' : 'negative'}">${money(result.net)}</td></tr>`;
-    }).join('') : '<tr><td colspan="15" class="share-table-empty">ไม่พบรายการเทรด</td></tr>';
+      return `<tr>${common}<td><span class="share-direction ${side.toLowerCase()}">${side}</span></td><td>${quantity} ${unit}</td><td><span class="share-entry-exit">${price(trade.entry)} / ${price(trade.exit)}</span><small class="share-stops">SL ${price(trade.stop)} · TP ${price(trade.target)}</small></td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td>${noteCell}<td>${htfCell}</td><td>${ltfCell}</td><td><span class="share-outcome ${result.result.toLowerCase()}">${result.result}</span></td><td>${result.r == null ? '—' : `${result.r >= 0 ? '+' : ''}${result.r.toFixed(2)}R`}</td><td class="share-max-rr">${maxRR}</td><td class="${result.net >= 0 ? 'positive' : 'negative'}">${money(result.net)}</td></tr>`;
+    }).join('') : '<tr><td colspan="16" class="share-table-empty">ไม่พบรายการเทรด</td></tr>';
   }
   function render(data) {
     $('shareWorkspaceName').textContent = data.workspace.name || 'Trading Journal';

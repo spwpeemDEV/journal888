@@ -56,7 +56,7 @@ export default {
       if (!workspace) return json({ error: 'share_link_not_found_or_revoked' }, 404)
 
       const { data: trades, error: tradesError } = await ctx.supabaseAdmin.from('trades')
-        .select('id, instrument, trade_date, trade_time, session, missed_entry, direction, quantity, entry, exit, stop, target, max_rr, fees, cfd_multiplier, setup, poi, chart_url_htf, chart_url_ltf')
+        .select('id, instrument, trade_date, trade_time, session, missed_entry, direction, quantity, entry, exit, stop, target, max_rr, fees, cfd_multiplier, setup, poi, notes, chart_url_htf, chart_url_ltf')
         .eq('workspace_id', workspace.id)
         .order('trade_date', { ascending: false })
         .order('trade_time', { ascending: false })
