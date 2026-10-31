@@ -42,6 +42,7 @@
     return { gross, net, risk, r: risk > 0 ? net / risk : null, result: net > 0 ? 'WIN' : net < 0 ? 'LOSS' : 'BE' };
   }
   function dateTime(trade) { return `${trade.trade_date || ''}${trade.trade_time || ''}`; }
+  function recordedAt(trade) { return String(trade.created_at || dateTime(trade)); }
   function getOverviewResults() {
     const period = $('sharePeriodFilter').value;
     const now = new Date();
@@ -162,7 +163,7 @@
       const matchesType = recordType === 'all' || (recordType === 'missed' ? trade.missed_entry : !trade.missed_entry);
       const haystack = [trade.missed_entry ? 'miss entry missed entry' : 'trade เทรดจริง', trade.instrument, trade.setup, trade.poi, trade.notes, trade.session, trade.direction, trade.chart_url_htf, trade.chart_url_ltf].join(' ').toLowerCase();
       return matchesInstrument && matchesType && haystack.includes(query);
-    }).sort((a, b) => dateTime(b).localeCompare(dateTime(a)));
+    }).sort((a, b) => recordedAt(a).localeCompare(recordedAt(b)));
   }
   function closeShareBatchModal() {
     $('shareBatchModal').classList.remove('open');

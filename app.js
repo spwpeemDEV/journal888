@@ -165,6 +165,7 @@
   function tradeFromRow(row) {
     return {
       id: row.id,
+      createdAt: row.created_at || '',
       missedEntry: row.missed_entry,
       instrument: row.instrument,
       date: row.trade_date,
@@ -1268,7 +1269,7 @@
     }).join('') + (hasReliableGroup ? '<div class="insight-note">* อันดับจากกลุ่มที่มีอย่างน้อย 3 เทรด · ยังไม่ใช่ข้อสรุประยะยาว</div>' : '<div class="insight-note">ยังไม่มี Setup/Session ที่มีข้อมูลครบ 3 เทรด — ดูตัวเลขเป็นข้อมูลเบื้องต้น</div>');
   }
   function renderRows(filtered) {
-    const rows = [...filtered].sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
+    const rows = [...filtered].sort((a, b) => String(a.createdAt || (a.date + (a.time || ''))).localeCompare(String(b.createdAt || (b.date + (b.time || '')))));
     $('tradeRows').innerHTML = rows.map((trade, index) => {
       const isMissed = Boolean(trade.missedEntry);
       const isPendingDelete = pendingDeleteIds.has(trade.id);
@@ -1399,7 +1400,7 @@
   }
   function getBatchChartSources() {
     const selectedType = $('batchChartsType').value;
-    const visibleRows = [...getVisibleTrades()].sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
+    const visibleRows = [...getVisibleTrades()].sort((a, b) => String(a.createdAt || (a.date + (a.time || ''))).localeCompare(String(b.createdAt || (b.date + (b.time || '')))));
     return visibleRows.flatMap((trade, rowIndex) => chartLinksFor(trade).filter(([label]) => selectedType === 'both' || label === selectedType).map(([label, url]) => ({
       label,
       url,
