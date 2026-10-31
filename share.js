@@ -2,7 +2,7 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
-  const money = (value) => `${value < 0 ? '-' : ''}$${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const money = (value, digits = 2) => `${value < 0 ? '-' : ''}$${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
   const dateLabel = (value) => {
     if (!value) return '—';
     const [year, month, day] = value.split('-').map(Number);
@@ -10,13 +10,16 @@
   };
   const price = (value) => value == null || value === '' ? '—' : Number(value).toLocaleString('en-US', { maximumFractionDigits: 5 });
   const safeHttpsUrl = (value) => {
-    try {
-      const parsed = new URL(String(value || ''));
-      return parsed.protocol === 'https:' ? parsed.href : '';
-    } catch { return ''; }
+    try { const parsed = new URL(String(value || '')); return parsed.protocol === 'https:' ? parsed.href : ''; }
+    catch { return ''; }
   };
   const token = window.location.hash.replace(/^#/, '');
+  const FUTURES = { GC: 100, MGC: 10, NQ: 20, MNQ: 2 };
+  let trades = [];
+  let chartMode = 'pnl';
   let activeView = 'overview';
+  let periodLabel = 'ทุกช่วงเวลา';
+
   function setView(view) {
     activeView = view === 'trades' ? 'trades' : 'overview';
     $('shareOverview').hidden = activeView !== 'overview';
@@ -28,81 +31,180 @@
     });
   }
   function compute(trade) {
-    const multiplier = ({ GC: 100, MGC: 10, NQ: 20, MNQ: 2 })[trade.instrument] || Number(trade.cfd_multiplier) || 0;
+    const multiplier = FUTURES[trade.instrument] || Number(trade.cfd_multiplier) || 0;
     const direction = trade.direction === 'Short' ? -1 : 1;
     const quantity = Number(trade.quantity) || 0;
     const gross = (Number(trade.exit) - Number(trade.entry)) * direction * multiplier * quantity;
     const net = gross - Number(trade.fees || 0);
-    const risk = Math.abs(Number(trade.entry) - Number(trade.stop)) * multiplier * quantity;
-    return { net, r: risk > 0 ? net / risk : null, result: net > 0 ? 'WIN' : net < 0 ? 'LOSS' : 'BE' };
+    const risk = trade.stop == null || trade.stop === '' ? 0 : Math.abs(Number(trade.entry) - Number(trade.stop)) * multiplier * quantity;
+    return { gross, net, risk, r: risk > 0 ? net / risk : null, result: net > 0 ? 'WIN' : net < 0 ? 'LOSS' : 'BE' };
   }
-  function render(data) {
-    const workspace = data.workspace;
-    const trades = Array.isArray(data.trades) ? data.trades : [];
-    const executed = trades.filter((trade) => !trade.missed_entry);
-    const calculated = executed.map((trade) => ({ trade, ...compute(trade) }));
-    const net = calculated.reduce((sum, item) => sum + item.net, 0);
-    const grossWins = calculated.filter((item) => item.net > 0).reduce((sum, item) => sum + item.net, 0);
-    const grossLosses = Math.abs(calculated.filter((item) => item.net < 0).reduce((sum, item) => sum + item.net, 0));
-    const wins = calculated.filter((item) => item.net > 0).length;
-    const rated = calculated.filter((item) => item.r != null);
-    const totalR = rated.reduce((sum, item) => sum + item.r, 0);
-    const avgR = rated.length ? totalR / rated.length : 0;
-    let streak = 0, maxStreak = 0, equity = 0, peak = 0, maxDrawdown = 0;
-    const chronological = [...calculated].sort((a, b) => `${a.trade.trade_date}${a.trade.trade_time || ''}`.localeCompare(`${b.trade.trade_date}${b.trade.trade_time || ''}`));
-    chronological.forEach((item) => {
+  function dateTime(trade) { return `${trade.trade_date || ''}${trade.trade_time || ''}`; }
+  function getOverviewResults() {
+    const period = $('sharePeriodFilter').value;
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (period === 'month') start.setDate(1);
+    if (period === 'week') start.setDate(start.getDate() - 6);
+    return trades.filter((trade) => {
+      if (trade.missed_entry) return false;
+      if (period === 'all') return true;
+      const d = new Date(`${trade.trade_date}T00:00:00`);
+      return !Number.isNaN(d.getTime()) && d >= start;
+    }).map((trade) => ({ trade, ...compute(trade) })).sort((a, b) => dateTime(a.trade).localeCompare(dateTime(b.trade)));
+  }
+  function pfFor(items) {
+    const wins = items.reduce((sum, item) => sum + Math.max(item.net, 0), 0);
+    const losses = items.reduce((sum, item) => sum + Math.abs(Math.min(item.net, 0)), 0);
+    return losses ? wins / losses : wins ? Infinity : 0;
+  }
+  function renderStats(results) {
+    const total = results.reduce((sum, item) => sum + item.net, 0);
+    const wins = results.filter((item) => item.net > 0).length;
+    const losses = results.filter((item) => item.net < 0).length;
+    let streak = 0, maxStreak = 0, pnlEquity = 0, pnlPeak = 0, maxDrawdown = 0, rEquity = 0, rPeak = 0, maxDrawdownR = 0;
+    results.forEach((item) => {
       streak = item.net < 0 ? streak + 1 : 0;
       maxStreak = Math.max(maxStreak, streak);
-      equity += item.net;
-      peak = Math.max(peak, equity);
-      maxDrawdown = Math.max(maxDrawdown, peak - equity);
+      pnlEquity += item.net;
+      pnlPeak = Math.max(pnlPeak, pnlEquity);
+      maxDrawdown = Math.max(maxDrawdown, pnlPeak - pnlEquity);
+      if (item.r != null) { rEquity += item.r; rPeak = Math.max(rPeak, rEquity); maxDrawdownR = Math.max(maxDrawdownR, rPeak - rEquity); }
     });
-    const pf = grossLosses ? grossWins / grossLosses : grossWins ? Infinity : 0;
-    $('shareWorkspaceName').textContent = workspace.name || 'Trading Journal';
-    $('shareStatus').hidden = true;
-    $('shareStats').innerHTML = [
-      ['กำไร / ขาดทุนสุทธิ', money(net), net >= 0 ? 'positive' : 'negative'],
-      ['อัตราชนะ', `${calculated.length ? (wins / calculated.length * 100).toFixed(1) : '0.0'}%`, ''],
-      ['Profit Factor', Number.isFinite(pf) ? pf.toFixed(2) : (grossWins ? '∞' : '0.00'), ''],
-      ['จำนวนเทรด', `${calculated.length}`, ''],
+    const rated = results.filter((item) => item.r != null);
+    const totalR = rated.reduce((sum, item) => sum + item.r, 0);
+    const avgR = rated.length ? totalR / rated.length : 0;
+    const maxRRValues = results.map(({ trade }) => trade.max_rr).filter((value) => value != null && value !== '').map(Number).filter((value) => Number.isFinite(value) && value >= 0);
+    const pf = pfFor(results);
+    const pfText = Number.isFinite(pf) ? pf.toFixed(2) : (results.some((item) => item.net > 0) ? '∞' : '0.00');
+    const stats = [
+      ['กำไร / ขาดทุนสุทธิ', money(total), total > 0 ? 'positive' : total < 0 ? 'negative' : ''],
+      ['อัตราชนะ', `${results.length ? (wins / results.length * 100).toFixed(1) : '0.0'}%`, ''],
+      ['Profit Factor', pfText, ''],
+      ['จำนวนเทรด', String(results.length), ''],
       ['แพ้ติดกันสูงสุด', `${maxStreak} ไม้`, ''],
-      ['R สะสม', `${totalR >= 0 ? '+' : ''}${totalR.toFixed(2)}R`, totalR >= 0 ? 'positive' : 'negative'],
-      ['Max Drawdown', money(maxDrawdown), 'negative'],
-      ['Expectancy (R)', `${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R`, avgR >= 0 ? 'positive' : 'negative'],
-    ].map(([label, value, tone]) => `<article class="share-stat-card"><span>${label}</span><strong class="${tone}">${value}</strong></article>`).join('');
-    $('shareChartTotal').textContent = money(net);
-    const points = chronological.reduce((arr, item) => [...arr, (arr.at(-1) || 0) + item.net], []);
-    if (!points.length) {
-      $('shareChart').innerHTML = '<div class="share-chart-empty">ยังไม่มีรายการเทรด</div>';
-    } else {
-      const min = Math.min(0, ...points), max = Math.max(0, ...points), range = max - min || 1;
-      const coords = points.map((point, i) => `${points.length === 1 ? 50 : i / (points.length - 1) * 100},${92 - (point - min) / range * 82}`).join(' ');
-      $('shareChart').innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="กราฟผลกำไรขาดทุนสะสม"><line x1="0" y1="${92 - (0 - min) / range * 82}" x2="100" y2="${92 - (0 - min) / range * 82}" class="share-chart-zero"/><polyline points="${coords}" class="share-chart-line"/></svg>`;
-    }
+      ['R สะสม', `${totalR >= 0 ? '+' : ''}${totalR.toFixed(1)}R`, totalR > 0 ? 'positive' : totalR < 0 ? 'negative' : ''],
+      ['Max Drawdown', results.length ? (maxDrawdown ? `-${money(maxDrawdown)}` : money(0)) : '—', maxDrawdown ? 'negative' : ''],
+      ['Expectancy (R)', rated.length ? `${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R` : '—', avgR > 0 ? 'positive' : avgR < 0 ? 'negative' : ''],
+      ['Max RR', maxRRValues.length ? `+${Math.max(...maxRRValues).toFixed(2)}R` : '—', maxRRValues.length ? 'positive' : '']
+    ];
+    $('shareStats').innerHTML = stats.map(([label, value, tone]) => `<article class="share-stat-card"><span>${label}</span><strong class="${tone}">${value}</strong>${label === 'Max Drawdown' ? `<small class="share-stat-detail">Peak-to-trough · ${maxDrawdownR > 0 ? '-' : ''}${maxDrawdownR.toFixed(2)}R</small>` : ''}</article>`).join('');
+    $('shareChartTotal').textContent = chartMode === 'r' ? `${totalR >= 0 ? '+' : ''}${totalR.toFixed(1)}R` : money(total);
+    $('shareChartTotal').className = (chartMode === 'r' ? totalR : total) > 0 ? 'positive' : (chartMode === 'r' ? totalR : total) < 0 ? 'negative' : '';
+    $('shareChartDelta').textContent = results.length ? `${results.length} รายการปิด · ${wins} รายการกำไร` : 'ยังไม่มีรายการเทรด';
+    $('shareChartPeriod').textContent = periodLabel;
+    $('shareChartEnd').textContent = results.length ? dateLabel(results[results.length - 1].trade.trade_date) : 'ปัจจุบัน';
+    $('shareChart').setAttribute('aria-label', chartMode === 'r' ? 'กราฟ R สะสม' : 'กราฟกำไรขาดทุนสะสม');
+    renderChart(results);
+    renderMarkets(results);
+    renderPerformanceBreakdown(results, 'setup', 'shareSetupPerformance');
+    renderPerformanceBreakdown(results, 'session', 'shareSessionPerformance');
+  }
+  function renderChart(results) {
+    const host = $('shareChart');
+    if (!results.length) { host.innerHTML = `<div class="share-chart-empty">ยังไม่มีรายการเทรดในช่วงนี้</div>`; return; }
+    let running = 0;
+    const points = results.map((item) => (running += chartMode === 'r' ? (item.r ?? 0) : item.net));
+    const width = 700, height = 135, pad = { top: 10, right: 5, bottom: 12, left: 8 };
+    let min = Math.min(0, ...points), max = Math.max(0, ...points);
+    if (min === max) { min -= 1; max += 1; }
+    const span = max - min;
+    const x = (index) => pad.left + (results.length === 1 ? (width - pad.left - pad.right) / 2 : index * (width - pad.left - pad.right) / (results.length - 1));
+    const y = (value) => pad.top + (max - value) / span * (height - pad.top - pad.bottom);
+    const coords = points.map((value, index) => [x(index), y(value)]);
+    const line = coords.map((point, index) => `${index ? 'L' : 'M'}${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' ');
+    const baseline = y(0), area = `${line} L${coords.at(-1)[0].toFixed(1)},${baseline.toFixed(1)} L${coords[0][0].toFixed(1)},${baseline.toFixed(1)} Z`;
+    const stroke = points.at(-1) >= 0 ? '#df515a' : '#ef7379';
+    const formatAxis = (value) => chartMode === 'r' ? `${value > 0 ? '+' : ''}${value.toFixed(1)}R` : `${value < 0 ? '-' : ''}$${Math.abs(value).toFixed(0)}`;
+    const labels = [max, 0, min].filter((value, index, array) => array.indexOf(value) === index).map((value) => `<text x="2" y="${Math.max(9, Math.min(height - 4, y(value) - 3)).toFixed(1)}" fill="#65656b" font-size="8" font-family="DM Mono">${formatAxis(value)}</text>`).join('');
+    host.innerHTML = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="shareEquityFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${stroke}" stop-opacity=".22"/><stop offset="100%" stop-color="${stroke}" stop-opacity="0"/></linearGradient></defs><path d="M0 ${baseline.toFixed(1)} H${width}" stroke="#343437" stroke-dasharray="3 5" fill="none"/><path d="${area}" fill="url(#shareEquityFill)"/><path d="${line}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>${coords.map((point, i) => `<circle cx="${point[0].toFixed(1)}" cy="${point[1].toFixed(1)}" r="${i === coords.length - 1 ? 3.2 : 1.8}" fill="${stroke}" stroke="#171718" stroke-width="1.5"/>`).join('')}${labels}</svg>`;
+  }
+  function renderMarkets(results) {
+    const futures = results.filter((item) => item.trade.instrument !== 'XAUUSD');
+    const cfd = results.filter((item) => item.trade.instrument === 'XAUUSD');
+    const groups = [
+      { name: 'Futures', detail: `${futures.length} รายการ · GC, MGC, NQ, MNQ`, items: futures, icon: 'F' },
+      { name: 'CFD', detail: `${cfd.length} รายการ · XAUUSD`, items: cfd, icon: 'C' }
+    ];
+    const totalAbs = groups.reduce((sum, group) => sum + group.items.reduce((n, item) => n + Math.abs(item.net), 0), 0);
+    $('shareMarkets').innerHTML = groups.map((group) => {
+      const net = group.items.reduce((sum, item) => sum + item.net, 0);
+      const weight = totalAbs ? group.items.reduce((n, item) => n + Math.abs(item.net), 0) / totalAbs * 100 : 0;
+      return `<div class="market-row"><div class="market-icon">${group.icon}</div><div><div class="market-name">${group.name}</div><div class="market-detail">${group.detail}</div><div class="market-track"><i style="width:${weight}%"></i></div></div><div class="market-value ${net > 0 ? 'positive-text' : net < 0 ? 'negative-text' : 'muted-text'}">${money(net)}</div></div>`;
+    }).join('');
+    $('shareInstrumentCount').textContent = String(new Set(results.map((item) => item.trade.instrument).filter(Boolean)).size);
+  }
+  function renderPerformanceBreakdown(results, field, hostId) {
     const groups = new Map();
-    calculated.forEach((item) => {
-      const key = item.trade.instrument || 'อื่น ๆ';
-      const group = groups.get(key) || { count: 0, net: 0 };
-      group.count += 1; group.net += item.net; groups.set(key, group);
-    });
-    $('shareInstruments').innerHTML = groups.size ? [...groups.entries()].map(([name, group]) => `<div class="share-instrument-row"><strong>${escapeHtml(name)}</strong><span>${group.count} เทรด</span><b class="${group.net >= 0 ? 'positive' : 'negative'}">${money(group.net)}</b></div>`).join('') : '<div class="share-chart-empty">ยังไม่มีรายการเทรด</div>';
-    $('shareTradesCount').textContent = `${trades.length} รายการ${trades.filter((trade) => trade.missed_entry).length ? ` · Miss Entry ${trades.filter((trade) => trade.missed_entry).length}` : ''}`;
-    $('shareTradeRows').innerHTML = trades.length ? trades.map((trade) => {
-      const htf = safeHttpsUrl(trade.chart_url_htf);
-      const ltf = safeHttpsUrl(trade.chart_url_ltf);
-      const chartCell = [
-        htf ? `<a class="share-chart-link" href="${escapeHtml(htf)}" target="_blank" rel="noopener noreferrer">HTF ↗</a>` : '',
-        ltf ? `<a class="share-chart-link" href="${escapeHtml(ltf)}" target="_blank" rel="noopener noreferrer">LTF ↗</a>` : ''
-      ].filter(Boolean).join(' ') || '—';
-      if (trade.missed_entry) return `<tr><td>${dateLabel(trade.trade_date)}<small>${escapeHtml(trade.trade_time || '—')}</small></td><td><span class="share-session-chip">${escapeHtml(trade.session || '—')}</span></td><td><span class="share-instrument-dot"></span>${escapeHtml(trade.instrument || '—')}</td><td>—</td><td>—</td><td>—</td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td>${chartCell}</td><td><span class="share-outcome">พลาดจังหวะ</span></td><td>—</td><td>—</td></tr>`;
+    results.forEach((item) => { const label = String(item.trade[field] || '').trim() || 'ไม่ระบุ'; if (!groups.has(label)) groups.set(label, []); groups.get(label).push(item); });
+    const rows = [...groups].map(([label, items]) => {
+      const net = items.reduce((sum, item) => sum + item.net, 0), wins = items.filter((item) => item.net > 0).length;
+      return { label, count: items.length, net, wins, rate: items.length ? wins / items.length * 100 : 0, pf: pfFor(items) };
+    }).sort((a, b) => (b.count > 0) - (a.count > 0) || (b.count >= 3) - (a.count >= 3) || (a.count >= 3 && b.count >= 3 && b.pf !== a.pf ? b.pf - a.pf : b.net - a.net));
+    const host = $(hostId);
+    if (!rows.length) { host.innerHTML = '<div class="insight-empty">ยังไม่มีข้อมูลในช่วงนี้</div>'; return; }
+    const reliable = rows.some((row) => row.count >= 3);
+    host.innerHTML = rows.map((row, index) => {
+      const leader = reliable && index === 0 && row.count >= 3;
+      const sample = row.count < 3 ? `ข้อมูลยังน้อย · ${row.count} เทรด` : `${row.count} เทรด`;
+      const pf = Number.isFinite(row.pf) ? row.pf.toFixed(2) : row.net > 0 ? '∞' : '0.00';
+      return `<div class="insight-row${leader ? ' insight-leader' : ''}"><div class="insight-main"><span class="insight-rank">${leader ? '★' : String(index + 1).padStart(2, '0')}</span><div class="insight-label-wrap"><strong class="insight-name">${escapeHtml(row.label)}</strong><small>${sample} · ชนะ ${row.wins}/${row.count} (${row.rate.toFixed(0)}%)</small></div>${leader ? '<span class="best-tag">ดีที่สุด*</span>' : ''}</div><div class="insight-values"><span class="insight-pf">PF <strong>${pf}</strong></span><strong class="${row.net > 0 ? 'positive-text' : row.net < 0 ? 'negative-text' : 'muted-text'}">${money(row.net)}</strong></div></div>`;
+    }).join('') + `<div class="insight-note">${reliable ? '* อันดับจากกลุ่มที่มีอย่างน้อย 3 เทรด · ยังไม่ใช่ข้อสรุประยะยาว' : 'ยังไม่มีรายการที่มีข้อมูลครบ 3 เทรด — ดูตัวเลขเป็นข้อมูลเบื้องต้น'}</div>`;
+  }
+  function getVisibleTrades() {
+    const instrument = $('shareInstrumentFilter').value;
+    const recordType = $('shareRecordTypeFilter').value;
+    const query = $('shareSearch').value.trim().toLowerCase();
+    return [...trades].filter((trade) => {
+      const matchesInstrument = instrument === 'all' || trade.instrument === instrument;
+      const matchesType = recordType === 'all' || (recordType === 'missed' ? trade.missed_entry : !trade.missed_entry);
+      const haystack = [trade.missed_entry ? 'miss entry missed entry' : 'trade เทรดจริง', trade.instrument, trade.setup, trade.poi, trade.notes, trade.session, trade.direction, trade.chart_url_htf, trade.chart_url_ltf].join(' ').toLowerCase();
+      return matchesInstrument && matchesType && haystack.includes(query);
+    }).sort((a, b) => dateTime(b).localeCompare(dateTime(a)));
+  }
+  function renderTradeRows() {
+    const rows = getVisibleTrades();
+    $('shareTradesCount').textContent = `${rows.length} จาก ${trades.length} รายการ${trades.filter((trade) => trade.missed_entry).length ? ` · Miss Entry ${trades.filter((trade) => trade.missed_entry).length}` : ''}`;
+    $('shareTableSummary').textContent = `แสดง ${rows.length} รายการ · อ่านอย่างเดียว`;
+    $('shareTradeRows').innerHTML = rows.length ? rows.map((trade) => {
+      const htf = safeHttpsUrl(trade.chart_url_htf), ltf = safeHttpsUrl(trade.chart_url_ltf);
+      const chartCell = [htf ? `<a class="share-chart-link" href="${escapeHtml(htf)}" target="_blank" rel="noopener noreferrer">HTF ↗</a>` : '', ltf ? `<a class="share-chart-link" href="${escapeHtml(ltf)}" target="_blank" rel="noopener noreferrer">LTF ↗</a>` : ''].filter(Boolean).join(' ') || '—';
+      const common = `<td>${dateLabel(trade.trade_date)}<small>${escapeHtml(trade.trade_time || '—')}</small></td><td><span class="share-session-chip">${escapeHtml(trade.session || '—')}</span></td><td><span class="share-instrument-dot"></span>${escapeHtml(trade.instrument || '—')}</td>`;
+      if (trade.missed_entry) return `<tr>${common}<td>—</td><td>—</td><td>—</td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td>${chartCell}</td><td><span class="share-outcome">พลาดจังหวะ</span></td><td>—</td><td>—</td></tr>`;
       const result = compute(trade);
       const quantity = trade.quantity == null ? '—' : Number(trade.quantity).toLocaleString('en-US', { maximumFractionDigits: 2 });
       const unit = trade.instrument === 'XAUUSD' ? 'lot' : 'สัญญา';
       const side = trade.direction === 'Short' ? 'SHORT' : 'LONG';
-      return `<tr><td>${dateLabel(trade.trade_date)}<small>${escapeHtml(trade.trade_time || '—')}</small></td><td><span class="share-session-chip">${escapeHtml(trade.session || '—')}</span></td><td><span class="share-instrument-dot"></span>${escapeHtml(trade.instrument || '—')}</td><td><span class="share-direction ${side.toLowerCase()}">${side}</span></td><td>${quantity} ${unit}</td><td><span class="share-entry-exit">${price(trade.entry)} / ${price(trade.exit)}</span><small class="share-stops">SL ${price(trade.stop)} · TP ${price(trade.target)}</small></td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td>${chartCell}</td><td><span class="share-outcome ${result.result.toLowerCase()}">${result.result}</span></td><td>${result.r == null ? '—' : `${result.r >= 0 ? '+' : ''}${result.r.toFixed(2)}R`}</td><td class="${result.net >= 0 ? 'positive' : 'negative'}">${money(result.net)}</td></tr>`;
-    }).join('') : '<tr><td colspan="12" class="share-table-empty">ยังไม่มีรายการเทรด</td></tr>';
+      return `<tr>${common}<td><span class="share-direction ${side.toLowerCase()}">${side}</span></td><td>${quantity} ${unit}</td><td><span class="share-entry-exit">${price(trade.entry)} / ${price(trade.exit)}</span><small class="share-stops">SL ${price(trade.stop)} · TP ${price(trade.target)}</small></td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td>${chartCell}</td><td><span class="share-outcome ${result.result.toLowerCase()}">${result.result}</span></td><td>${result.r == null ? '—' : `${result.r >= 0 ? '+' : ''}${result.r.toFixed(2)}R`}</td><td class="${result.net >= 0 ? 'positive' : 'negative'}">${money(result.net)}</td></tr>`;
+    }).join('') : '<tr><td colspan="12" class="share-table-empty">ไม่พบรายการเทรด</td></tr>';
+  }
+  function render(data) {
+    $('shareWorkspaceName').textContent = data.workspace.name || 'Trading Journal';
+    trades = Array.isArray(data.trades) ? data.trades : [];
+    const instruments = [...new Set(trades.map((trade) => trade.instrument).filter(Boolean))].sort();
+    $('shareInstrumentFilter').innerHTML = '<option value="all">ทุกสินทรัพย์</option>' + instruments.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+    $('shareStatus').hidden = true;
+    renderOverview();
+    renderTradeRows();
+  }
+  function renderOverview() {
+    periodLabel = $('sharePeriodFilter').selectedOptions[0].textContent;
+    renderStats(getOverviewResults());
   }
   document.querySelectorAll('[data-share-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.shareView)));
+  $('sharePeriodFilter').addEventListener('change', renderOverview);
+  $('shareChartMode').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-share-chart]');
+    if (!button) return;
+    chartMode = button.dataset.shareChart;
+    $('shareChartMode').querySelectorAll('[data-share-chart]').forEach((item) => {
+      const active = item === button;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    renderOverview();
+  });
+  ['shareSearch', 'shareInstrumentFilter', 'shareRecordTypeFilter'].forEach((id) => $(id).addEventListener(id === 'shareSearch' ? 'input' : 'change', renderTradeRows));
   setView('overview');
   const config = window.REDLINE_SUPABASE_CONFIG;
   if (!token || !config || !window.supabase?.createClient) {

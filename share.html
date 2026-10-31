@@ -33,20 +33,29 @@
     </nav>
     <p class="share-status" id="shareStatus" role="status" aria-live="polite">กำลังโหลดข้อมูล…</p>
     <section class="share-view" id="shareOverview" hidden>
+      <div class="share-overview-controls"><div class="period-control"><span class="period-icon">◷</span><select id="sharePeriodFilter" aria-label="ช่วงเวลาสรุป"><option value="all">ทุกช่วงเวลา</option><option value="month">เดือนนี้</option><option value="week">7 วันล่าสุด</option></select><span class="select-chevron">⌄</span></div></div>
       <div class="share-stat-grid" id="shareStats"></div>
       <article class="panel share-chart-panel">
-        <div class="panel-heading"><div><div class="panel-title">ผลประกอบการสะสม</div><div class="panel-subtitle">คำนวณจากรายการเทรดใน workspace นี้</div></div><strong id="shareChartTotal">$0.00</strong></div>
-        <div class="share-chart" id="shareChart"></div>
+        <div class="panel-heading"><div><div class="panel-title">เส้นผลประกอบการ</div><div class="panel-subtitle">เลือกดูผลกำไร/ขาดทุน หรือ R สะสม</div></div><div class="chart-legend"><div class="chart-mode-toggle" id="shareChartMode" role="group" aria-label="เลือกรูปแบบกราฟ"><button type="button" data-share-chart="pnl" class="active" aria-pressed="true">$ P&amp;L</button><button type="button" data-share-chart="r" aria-pressed="false">R สะสม</button></div><span id="shareChartPeriod">ทุกช่วงเวลา</span></div></div>
+        <div class="chart-summary"><strong id="shareChartTotal">$0.00</strong><span id="shareChartDelta">ยังไม่มีรายการเทรด</span></div>
+        <div class="share-chart" id="shareChart" role="img" aria-label="กราฟกำไรขาดทุนสะสม"></div>
+        <div class="chart-axis"><span>เริ่มต้น</span><span id="shareChartEnd">ปัจจุบัน</span></div>
       </article>
       <article class="panel share-breakdown-panel">
-        <div class="panel-heading"><div><div class="panel-title">แยกตามสินทรัพย์</div><div class="panel-subtitle">จำนวนรายการและกำไร/ขาดทุนสุทธิ</div></div></div>
-        <div class="share-instruments" id="shareInstruments"></div>
+        <div class="panel-heading"><div><div class="panel-title">ภาพรวมตลาด</div><div class="panel-subtitle">แยกตามประเภทสินทรัพย์</div></div></div>
+        <div class="market-breakdown" id="shareMarkets"></div>
+        <div class="breakdown-footer"><span>สินทรัพย์ที่บันทึก</span><strong id="shareInstrumentCount">0</strong></div>
       </article>
+      <section class="share-insights-grid" aria-label="วิเคราะห์ผลงานแยกตาม Setup และ Session">
+        <article class="panel share-breakdown-panel"><div class="panel-heading"><div><div class="panel-title">ผลงานตาม Setup</div><div class="panel-subtitle">จัดอันดับด้วย Profit Factor · ควรมีอย่างน้อย 3 เทรดต่อ Setup</div></div></div><div class="insight-list" id="shareSetupPerformance"></div></article>
+        <article class="panel share-breakdown-panel"><div class="panel-heading"><div><div class="panel-title">ผลงานตาม Session</div><div class="panel-subtitle">เทียบช่วงตลาดจาก Session ที่บันทึกไว้</div></div></div><div class="insight-list" id="shareSessionPerformance"></div></article>
+      </section>
     </section>
     <section class="share-view" id="shareTrades" hidden>
       <article class="panel share-trades-panel">
-        <div class="share-trades-heading"><div><div class="panel-title">รายการเทรด</div><div class="panel-subtitle" id="shareTradesCount">0 รายการ</div></div></div>
+        <div class="share-trades-heading"><div><div class="panel-title">รายการเทรด</div><div class="panel-subtitle" id="shareTradesCount">0 รายการ</div></div><div class="journal-actions"><label class="search-box"><span>⌕</span><input id="shareSearch" type="search" placeholder="ค้นหารายการ..." aria-label="ค้นหารายการ"></label><select class="table-filter" id="shareInstrumentFilter" aria-label="กรองตามสินทรัพย์"><option value="all">ทุกสินทรัพย์</option></select><select class="table-filter" id="shareRecordTypeFilter" aria-label="กรองประเภทบันทึก"><option value="all">ทุกประเภท</option><option value="trade">เทรดจริง</option><option value="missed">Miss Entry</option></select></div></div>
         <div class="table-scroll"><table class="share-trades-table"><thead><tr><th>วัน / เวลา</th><th>Session</th><th>สินทรัพย์</th><th>ฝั่ง</th><th>ขนาด / หน่วย</th><th>ราคาเข้า / ออก</th><th>Setup</th><th>POI</th><th>กราฟ</th><th>สถานะ / ผล</th><th>ผลลัพธ์ (R)</th><th>Net P&amp;L</th></tr></thead><tbody id="shareTradeRows"></tbody></table></div>
+        <div class="share-table-footer" id="shareTableSummary"></div>
       </article>
     </section>
     <footer class="share-footer">ข้อมูลนี้เป็นลิงก์สาธารณะ ผู้ที่มีลิงก์สามารถเปิดดูได้</footer>
