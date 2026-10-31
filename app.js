@@ -32,6 +32,7 @@
   let optionManagerMode = 'setup';
   let setupReturnToTrade = false;
   let pendingImages = [];
+  let batchChartSources = [];
   let pendingDeleteIds = new Set();
   let confirmResolver = null;
   let toastTimer;
@@ -1383,6 +1384,54 @@
     $('imageViewer').classList.remove('open');
     $('imageViewer').setAttribute('aria-hidden', 'true');
   }
+  function closeBatchChartsModal() {
+    $('batchChartsModal').classList.remove('open');
+    $('batchChartsModal').setAttribute('aria-hidden', 'true');
+  }
+  function getBatchChartSources() {
+    const visibleRows = [...getVisibleTrades()].sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
+    return visibleRows.flatMap((trade, rowIndex) => chartLinksFor(trade).map(([label, url]) => ({
+      label,
+      url,
+      rowNumber: rowIndex + 1,
+      date: trade.date,
+      instrument: trade.instrument
+    })));
+  }
+  function updateBatchChartsRange() {
+    const startIndex = Math.max(0, Number($('batchChartsStart').value) - 1);
+    const available = Math.max(0, batchChartSources.length - startIndex);
+    const countField = $('batchChartsCount');
+    countField.max = String(available);
+    countField.value = String(Math.max(1, Math.min(Number(countField.value) || 1, available)));
+    $('batchChartsAvailability').textContent = `จากกราฟ ${batchChartSources.length} ลิงก์ที่มีในรายการปัจจุบัน · เริ่มตำแหน่งนี้เปิดต่อได้ ${available} ลิงก์`;
+  }
+  function openBatchChartsModal() {
+    batchChartSources = getBatchChartSources();
+    if (!batchChartSources.length) { toast('ไม่มีลิงก์ HTF/LTF ในรายการที่แสดงอยู่'); return; }
+    $('batchChartsStart').innerHTML = batchChartSources.map((source, index) => `<option value="${index + 1}">${index + 1}. รายการ ${source.rowNumber} · ${dateLabel(source.date)} · ${escapeHtml(source.instrument)} · ${source.label}</option>`).join('');
+    $('batchChartsCount').value = String(Math.min(5, batchChartSources.length));
+    updateBatchChartsRange();
+    $('batchChartsModal').classList.add('open');
+    $('batchChartsModal').setAttribute('aria-hidden', 'false');
+    $('batchChartsStart').focus();
+  }
+  function openSelectedBatchCharts() {
+    const startIndex = Math.max(0, Number($('batchChartsStart').value) - 1);
+    const requested = Math.max(1, Number($('batchChartsCount').value) || 1);
+    const selected = batchChartSources.slice(startIndex, startIndex + requested);
+    let opened = 0;
+    selected.forEach((source) => {
+      const tab = window.open(source.url, '_blank');
+      if (!tab) return;
+      tab.opener = null;
+      opened += 1;
+    });
+    closeBatchChartsModal();
+    if (opened === selected.length) toast(`เปิดกราฟ ${opened} แท็บแล้ว`);
+    else if (opened) toast(`เปิดได้ ${opened}/${selected.length} แท็บ · เบราว์เซอร์บล็อกบางแท็บ`);
+    else toast('เบราว์เซอร์บล็อกการเปิดหลายแท็บ กรุณาอนุญาต Pop-ups สำหรับเว็บไซต์นี้');
+  }
   function updateInstrumentField() {
     const cfd = $('instrument').value === 'XAUUSD';
     const missed = $('recordType').value === 'missed';
@@ -1841,6 +1890,16 @@
   $('backupButton').addEventListener('click', backupJson);
   $('closeImageViewer').addEventListener('click', closeImageViewer);
   $('imageViewer').addEventListener('click', (event) => { if (event.target === $('imageViewer')) closeImageViewer(); });
+  $('openBatchCharts').addEventListener('click', openBatchChartsModal);
+  $('closeBatchCharts').addEventListener('click', closeBatchChartsModal);
+  $('cancelBatchCharts').addEventListener('click', closeBatchChartsModal);
+  $('batchChartsModal').addEventListener('click', (event) => { if (event.target === $('batchChartsModal')) closeBatchChartsModal(); });
+  $('batchChartsStart').addEventListener('change', updateBatchChartsRange);
+  $('batchChartsCount').addEventListener('input', () => {
+    const available = batchChartSources.length - Number($('batchChartsStart').value) + 1;
+    $('batchChartsCount').value = String(Math.max(1, Math.min(Number($('batchChartsCount').value) || 1, available)));
+  });
+  $('confirmBatchCharts').addEventListener('click', openSelectedBatchCharts);
   $('returnToTrade').addEventListener('click', () => {
     setupReturnToTrade = false;
     renderSetupOptions($('setup').value);
@@ -2118,7 +2177,8 @@
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-      if ($('imageViewer').classList.contains('open')) closeImageViewer();
+      if ($('batchChartsModal').classList.contains('open')) closeBatchChartsModal();
+      else if ($('imageViewer').classList.contains('open')) closeImageViewer();
       else if ($('workspaceManager').classList.contains('open')) closeWorkspaceManager();
       else if ($('confirmModal').classList.contains('open')) closeConfirmModal(false);
       else if (editingSetupName) resetSetupEditor();
