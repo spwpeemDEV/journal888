@@ -302,7 +302,7 @@
       if (item.net < 0) { lossStreak += 1; maxLossStreak = Math.max(maxLossStreak, lossStreak); } else lossStreak = 0;
     });
     const rated = results.filter((item) => item.r != null);
-    const maxRRValues = results.map(({ trade }) => Number(trade.maxRR)).filter((value) => Number.isFinite(value) && value >= 0);
+    const maxRRValues = results.filter(({ trade }) => trade.maxRR != null && trade.maxRR !== '').map(({ trade }) => Number(trade.maxRR)).filter((value) => Number.isFinite(value) && value >= 0);
     return {
       count: results.length,
       winRate: results.length ? wins / results.length * 100 : 0,
@@ -1135,7 +1135,7 @@
     const rated = results.filter((item) => item.r != null);
     const avgR = rated.length ? rated.reduce((sum, item) => sum + item.r, 0) / rated.length : 0;
     const totalR = rated.reduce((sum, item) => sum + item.r, 0);
-    const maxRRValues = results.map(({ trade }) => Number(trade.maxRR)).filter((value) => Number.isFinite(value) && value >= 0);
+    const maxRRValues = results.filter(({ trade }) => trade.maxRR != null && trade.maxRR !== '').map(({ trade }) => Number(trade.maxRR)).filter((value) => Number.isFinite(value) && value >= 0);
     const maxRR = maxRRValues.length ? Math.max(...maxRRValues) : null;
     let pnlEquity = 0, pnlPeak = 0, maxDrawdown = 0;
     let rEquity = 0, rPeak = 0, maxDrawdownR = 0;
@@ -1172,8 +1172,8 @@
     $('expectancyR').textContent = rated.length ? `${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R` : '—';
     $('expectancyR').className = `stat-value ${avgR > 0 ? 'positive' : avgR < 0 ? 'negative' : ''}`;
     $('expectancySample').textContent = rated.length ? `${rated.length} เทรดที่มี Risk` : 'ยังไม่มีเทรดที่มี Risk';
-    $('maxRR').textContent = maxRR == null ? '—' : `+${maxRR.toFixed(2)}R`;
-    $('maxRR').className = `stat-value ${maxRR != null ? 'positive' : ''}`;
+    $('maxRRStat').textContent = maxRR == null ? '—' : `+${maxRR.toFixed(2)}R`;
+    $('maxRRStat').className = `stat-value ${maxRR != null ? 'positive' : ''}`;
     $('maxRRSample').textContent = maxRR == null ? 'ยังไม่มี Max RR' : `${maxRRValues.length} เทรดที่กรอก Max RR`;
     $('tradePeriod').textContent = $('periodFilter').selectedOptions[0].textContent;
     $('navTradeCount').textContent = String(getActiveTrades().length);
@@ -1279,7 +1279,7 @@
       const rowActions = demoMode ? '' : `<button class="row-action" data-edit="${escapeHtml(trade.id)}" title="แก้ไข" aria-label="แก้ไขรายการ">✎</button><button class="row-action${isPendingDelete ? ' pending-delete' : ''}" data-delete="${escapeHtml(trade.id)}" title="${isPendingDelete ? 'ยกเลิกการเลือก' : 'เลือกเพื่อลบ'}" aria-label="${isPendingDelete ? 'ยกเลิกการเลือกลบ' : 'เลือกเพื่อลบ'}">${isPendingDelete ? '↶' : '×'}</button>`;
       const priceText = `${Number(trade.entry).toLocaleString('en-US')} <span style="color:#707076">/</span> ${isMissed || trade.exit == null || trade.exit === '' ? '—' : Number(trade.exit).toLocaleString('en-US')}`;
       const rowClasses = [isMissed ? 'missed-entry-row' : '', isPendingDelete ? 'pending-delete-row' : ''].filter(Boolean).join(' ');
-      return `<tr class="${rowClasses}"><td><span class="date-cell">${dateLabel(trade.date)}<small>${escapeHtml(trade.time || '—')}</small></span></td><td><span class="instrument-pill ${isFutures ? 'futures' : ''}"><i></i>${escapeHtml(trade.instrument)}</span></td><td><span class="dir-tag ${trade.direction === 'Short' ? 'short' : 'long'}">${trade.direction === 'Short' ? 'SHORT' : 'LONG'}</span></td><td>${isMissed ? '—' : escapeHtml(quantityWithUnit(trade))}</td><td><span class="date-cell">${priceText}<small>SL ${trade.stop === '' ? '—' : Number(trade.stop).toLocaleString('en-US')} · TP ${trade.target == null || trade.target === '' ? '—' : Number(trade.target).toLocaleString('en-US')}</small></span></td><td><span class="setup-chip">${escapeHtml(trade.setup || '—')}</span></td><td><span class="poi-chip" title="${escapeHtml(trade.poi || '')}">${escapeHtml(trade.poi || '—')}</span></td><td><div class="chart-cell">${chartCell || '<span class="muted-text">—</span>'}</div></td><td><span class="outcome-chip ${outcomeClass}">${isMissed ? 'MISSED' : result.outcome}</span></td><td class="${!result || result.r == null ? 'muted-text' : result.r >= 0 ? 'positive-text' : 'negative-text'}">${rText}</td><td class="${!result || result.net === 0 ? 'muted-text' : result.net > 0 ? 'positive-text' : 'negative-text'}">${result ? money(result.net) : '—'}</td><td><div class="row-actions">${rowActions}</div></td></tr>`;
+      return `<tr class="${rowClasses}"><td><span class="date-cell">${dateLabel(trade.date)}<small>${escapeHtml(trade.time || '—')}</small></span></td><td><span class="session-chip">${escapeHtml(trade.session || '—')}</span></td><td><span class="instrument-pill ${isFutures ? 'futures' : ''}"><i></i>${escapeHtml(trade.instrument)}</span></td><td><span class="dir-tag ${trade.direction === 'Short' ? 'short' : 'long'}">${trade.direction === 'Short' ? 'SHORT' : 'LONG'}</span></td><td>${isMissed ? '—' : escapeHtml(quantityWithUnit(trade))}</td><td><span class="date-cell">${priceText}<small>SL ${trade.stop === '' ? '—' : Number(trade.stop).toLocaleString('en-US')} · TP ${trade.target == null || trade.target === '' ? '—' : Number(trade.target).toLocaleString('en-US')}</small></span></td><td><span class="setup-chip">${escapeHtml(trade.setup || '—')}</span></td><td><span class="poi-chip" title="${escapeHtml(trade.poi || '')}">${escapeHtml(trade.poi || '—')}</span></td><td><div class="chart-cell">${chartCell || '<span class="muted-text">—</span>'}</div></td><td><span class="outcome-chip ${outcomeClass}">${isMissed ? 'MISSED' : result.outcome}</span></td><td class="${!result || result.r == null ? 'muted-text' : result.r >= 0 ? 'positive-text' : 'negative-text'}">${rText}</td><td class="${!result || result.net === 0 ? 'muted-text' : result.net > 0 ? 'positive-text' : 'negative-text'}">${result ? money(result.net) : '—'}</td><td><div class="row-actions">${rowActions}</div></td></tr>`;
     }).join('');
     const hasTrades = rows.length > 0;
     $('emptyState').classList.toggle('show', !hasTrades);

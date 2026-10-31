@@ -11,3 +11,6 @@ create table if not exists public.workspace_shares (
 alter table public.workspace_shares enable row level security;
 revoke all on table public.workspace_shares from anon, authenticated;
 grant all on table public.workspace_shares to service_role;
+
+-- The public share Edge Function reads these rows with its server-only service role.
+grant select on table public.workspaces, public.trades to service_role;

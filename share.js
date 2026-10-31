@@ -8,6 +8,13 @@
     const [year, month, day] = value.split('-').map(Number);
     return new Intl.DateTimeFormat('th-TH', { day: '2-digit', month: 'short', year: '2-digit' }).format(new Date(year, month - 1, day));
   };
+  const price = (value) => value == null || value === '' ? '—' : Number(value).toLocaleString('en-US', { maximumFractionDigits: 5 });
+  const safeHttpsUrl = (value) => {
+    try {
+      const parsed = new URL(String(value || ''));
+      return parsed.protocol === 'https:' ? parsed.href : '';
+    } catch { return ''; }
+  };
   const token = window.location.hash.replace(/^#/, '');
   let activeView = 'overview';
   function setView(view) {
@@ -81,11 +88,19 @@
     $('shareInstruments').innerHTML = groups.size ? [...groups.entries()].map(([name, group]) => `<div class="share-instrument-row"><strong>${escapeHtml(name)}</strong><span>${group.count} เทรด</span><b class="${group.net >= 0 ? 'positive' : 'negative'}">${money(group.net)}</b></div>`).join('') : '<div class="share-chart-empty">ยังไม่มีรายการเทรด</div>';
     $('shareTradesCount').textContent = `${trades.length} รายการ${trades.filter((trade) => trade.missed_entry).length ? ` · Miss Entry ${trades.filter((trade) => trade.missed_entry).length}` : ''}`;
     $('shareTradeRows').innerHTML = trades.length ? trades.map((trade) => {
-      if (trade.missed_entry) return `<tr><td>${dateLabel(trade.trade_date)}<small>${escapeHtml(trade.trade_time || '—')}</small></td><td>${escapeHtml(trade.instrument)}</td><td>Miss Entry</td><td>—</td><td>—</td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td><span class="share-outcome">พลาดจังหวะ</span></td><td>—</td><td>—</td></tr>`;
+      const htf = safeHttpsUrl(trade.chart_url_htf);
+      const ltf = safeHttpsUrl(trade.chart_url_ltf);
+      const chartCell = [
+        htf ? `<a class="share-chart-link" href="${escapeHtml(htf)}" target="_blank" rel="noopener noreferrer">HTF ↗</a>` : '',
+        ltf ? `<a class="share-chart-link" href="${escapeHtml(ltf)}" target="_blank" rel="noopener noreferrer">LTF ↗</a>` : ''
+      ].filter(Boolean).join(' ') || '—';
+      if (trade.missed_entry) return `<tr><td>${dateLabel(trade.trade_date)}<small>${escapeHtml(trade.trade_time || '—')}</small></td><td><span class="share-session-chip">${escapeHtml(trade.session || '—')}</span></td><td><span class="share-instrument-dot"></span>${escapeHtml(trade.instrument || '—')}</td><td>—</td><td>—</td><td>—</td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td>${chartCell}</td><td><span class="share-outcome">พลาดจังหวะ</span></td><td>—</td><td>—</td></tr>`;
       const result = compute(trade);
-      const qty = trade.quantity == null ? '—' : Number(trade.quantity).toLocaleString('en-US', { maximumFractionDigits: 2 });
-      return `<tr><td>${dateLabel(trade.trade_date)}<small>${escapeHtml(trade.trade_time || '—')}</small></td><td>${escapeHtml(trade.instrument || '—')}</td><td>${escapeHtml(trade.direction || '—')}</td><td>${qty}</td><td>${Number(trade.entry).toLocaleString('en-US')} / ${trade.exit == null ? '—' : Number(trade.exit).toLocaleString('en-US')}</td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td><span class="share-outcome ${result.result.toLowerCase()}">${result.result}</span></td><td>${result.r == null ? '—' : `${result.r >= 0 ? '+' : ''}${result.r.toFixed(2)}R`}</td><td class="${result.net >= 0 ? 'positive' : 'negative'}">${money(result.net)}</td></tr>`;
-    }).join('') : '<tr><td colspan="10" class="share-table-empty">ยังไม่มีรายการเทรด</td></tr>';
+      const quantity = trade.quantity == null ? '—' : Number(trade.quantity).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      const unit = trade.instrument === 'XAUUSD' ? 'lot' : 'สัญญา';
+      const side = trade.direction === 'Short' ? 'SHORT' : 'LONG';
+      return `<tr><td>${dateLabel(trade.trade_date)}<small>${escapeHtml(trade.trade_time || '—')}</small></td><td><span class="share-session-chip">${escapeHtml(trade.session || '—')}</span></td><td><span class="share-instrument-dot"></span>${escapeHtml(trade.instrument || '—')}</td><td><span class="share-direction ${side.toLowerCase()}">${side}</span></td><td>${quantity} ${unit}</td><td><span class="share-entry-exit">${price(trade.entry)} / ${price(trade.exit)}</span><small class="share-stops">SL ${price(trade.stop)} · TP ${price(trade.target)}</small></td><td>${escapeHtml(trade.setup || '—')}</td><td>${escapeHtml(trade.poi || '—')}</td><td>${chartCell}</td><td><span class="share-outcome ${result.result.toLowerCase()}">${result.result}</span></td><td>${result.r == null ? '—' : `${result.r >= 0 ? '+' : ''}${result.r.toFixed(2)}R`}</td><td class="${result.net >= 0 ? 'positive' : 'negative'}">${money(result.net)}</td></tr>`;
+    }).join('') : '<tr><td colspan="12" class="share-table-empty">ยังไม่มีรายการเทรด</td></tr>';
   }
   document.querySelectorAll('[data-share-view]').forEach((button) => button.addEventListener('click', () => setView(button.dataset.shareView)));
   setView('overview');
