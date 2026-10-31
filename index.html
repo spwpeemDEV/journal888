@@ -201,10 +201,10 @@
   </div>
   <div class="modal-backdrop batch-charts-backdrop" id="batchChartsModal" aria-hidden="true">
     <section class="batch-charts-modal" role="dialog" aria-modal="true" aria-labelledby="batchChartsTitle">
-      <div class="modal-header"><div><div class="eyebrow">TRADE CHARTS</div><h2 id="batchChartsTitle">เปิดกราฟหลายรายการ</h2><p class="panel-subtitle">เลือกกราฟเริ่มต้นและจำนวนลิงก์ที่จะเปิดจากรายการที่กรองอยู่</p></div><button class="close-button" id="closeBatchCharts" aria-label="ปิด">×</button></div>
-      <div class="batch-charts-fields"><label class="field"><span>เริ่มจากกราฟ</span><select id="batchChartsStart"></select></label><label class="field"><span>จำนวนกราฟที่จะเปิด</span><input id="batchChartsCount" type="number" min="1" step="1" value="1"></label></div>
+      <div class="modal-header"><div><div class="eyebrow">TRADE CHARTS</div><h2 id="batchChartsTitle">เปิดกราฟหลายรายการ</h2><p class="panel-subtitle">เลือกประเภทกราฟ จุดเริ่มต้น และจำนวนจากรายการที่กรองอยู่</p></div><button class="close-button" id="closeBatchCharts" aria-label="ปิด">×</button></div>
+      <div class="batch-charts-fields"><label class="field"><span>ประเภทกราฟ</span><select id="batchChartsType"><option value="both">HTF และ LTF</option><option value="HTF">HTF เท่านั้น</option><option value="LTF">LTF เท่านั้น</option></select></label><label class="field"><span>เริ่มจากกราฟ</span><select id="batchChartsStart"></select></label><label class="field"><span>จำนวนกราฟที่จะเปิด</span><input id="batchChartsCount" type="number" min="1" step="1" value="1"></label></div>
       <p class="batch-charts-availability" id="batchChartsAvailability"></p>
-      <div class="modal-actions"><button type="button" class="secondary-button" id="cancelBatchCharts">ยกเลิก</button><button type="button" class="primary-button" id="confirmBatchCharts">↗ เปิดกราฟ</button></div>
+      <div class="modal-actions"><button type="button" class="secondary-button" id="cancelBatchCharts">ยกเลิก</button><button type="button" class="secondary-button" id="stepBatchCharts">เปิดทีละแท็บ</button><button type="button" class="primary-button" id="confirmBatchCharts">↗ เปิดทั้งหมด</button></div>
     </section>
   </div>
   <div class="modal-backdrop confirm-backdrop" id="confirmModal" aria-hidden="true">

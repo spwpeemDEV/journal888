@@ -19,6 +19,8 @@
   let chartMode = 'pnl';
   let activeView = 'overview';
   let periodLabel = 'ทุกช่วงเวลา';
+  let shareBatchSources = [];
+  let shareBatchSequence = null;
 
   function setView(view) {
     activeView = view === 'trades' ? 'trades' : 'overview';
@@ -162,6 +164,109 @@
       return matchesInstrument && matchesType && haystack.includes(query);
     }).sort((a, b) => dateTime(b).localeCompare(dateTime(a)));
   }
+  function closeShareBatchModal() {
+    $('shareBatchModal').classList.remove('open');
+    $('shareBatchModal').setAttribute('aria-hidden', 'true');
+    shareBatchSequence = null;
+    $('shareBatchType').disabled = false;
+    $('shareBatchStart').disabled = false;
+    $('shareBatchCount').disabled = false;
+    $('openAllShareBatch').disabled = false;
+    $('openAllShareBatch').textContent = '↗ เปิดทั้งหมด';
+    $('stepShareBatch').disabled = false;
+    $('stepShareBatch').textContent = 'เปิดทีละแท็บ';
+  }
+  function getShareBatchSources() {
+    const type = $('shareBatchType').value;
+    return getVisibleTrades().flatMap((trade, rowIndex) => [
+      ['HTF', safeHttpsUrl(trade.chart_url_htf)],
+      ['LTF', safeHttpsUrl(trade.chart_url_ltf)]
+    ].filter(([label, url]) => url && (type === 'both' || label === type)).map(([label, url]) => ({ label, url, rowNumber: rowIndex + 1, date: trade.trade_date, instrument: trade.instrument })));
+  }
+  function refreshShareBatchSources() {
+    shareBatchSequence = null;
+    $('openAllShareBatch').textContent = '↗ เปิดทั้งหมด';
+    $('stepShareBatch').textContent = 'เปิดทีละแท็บ';
+    $('stepShareBatch').disabled = false;
+    shareBatchSources = getShareBatchSources();
+    if (!shareBatchSources.length) {
+      $('shareBatchStart').innerHTML = '<option value="">ไม่พบกราฟประเภทนี้</option>';
+      $('shareBatchCount').value = '1';
+      $('shareBatchCount').max = '1';
+      $('shareBatchStatus').textContent = 'ไม่มีลิงก์กราฟประเภทนี้ในรายการที่กรองอยู่';
+      $('openAllShareBatch').disabled = true;
+      $('stepShareBatch').disabled = true;
+      return;
+    }
+    $('openAllShareBatch').disabled = false;
+    $('shareBatchStart').innerHTML = shareBatchSources.map((source, index) => `<option value="${index + 1}">${index + 1}. รายการ ${source.rowNumber} · ${dateLabel(source.date)} · ${escapeHtml(source.instrument)} · ${source.label}</option>`).join('');
+    $('shareBatchStart').value = '1';
+    $('shareBatchCount').value = String(Math.min(Number($('shareBatchCount').value) || 5, shareBatchSources.length));
+    updateShareBatchRange();
+  }
+  function updateShareBatchRange() {
+    const start = Math.max(0, Number($('shareBatchStart').value) - 1);
+    const available = Math.max(0, shareBatchSources.length - start);
+    $('shareBatchCount').max = String(available);
+    $('shareBatchCount').value = String(Math.max(1, Math.min(Number($('shareBatchCount').value) || 1, available)));
+    $('shareBatchStatus').textContent = `มี ${shareBatchSources.length} กราฟตามประเภทที่เลือก · เริ่มตำแหน่งนี้เปิดต่อได้ ${available} กราฟ`;
+  }
+  function openShareBatchModal() {
+    refreshShareBatchSources();
+    const anyLinks = getVisibleTrades().some((trade) => safeHttpsUrl(trade.chart_url_htf) || safeHttpsUrl(trade.chart_url_ltf));
+    if (!anyLinks) $('shareBatchStatus').textContent = 'ไม่พบลิงก์ HTF/LTF ในรายการที่กรองอยู่';
+    $('shareBatchModal').classList.add('open');
+    $('shareBatchModal').setAttribute('aria-hidden', 'false');
+    $('shareBatchType').focus();
+  }
+  function openNextShareChart() {
+    if (!shareBatchSequence) {
+      const start = Math.max(0, Number($('shareBatchStart').value) - 1);
+      const count = Math.max(1, Number($('shareBatchCount').value) || 1);
+      shareBatchSequence = { nextIndex: start, startIndex: start, endIndex: Math.min(shareBatchSources.length, start + count) };
+    }
+    const source = shareBatchSources[shareBatchSequence.nextIndex];
+    if (!source) { closeShareBatchModal(); return; }
+    const tab = window.open(source.url, '_blank');
+    if (!tab) { $('shareBatchStatus').textContent = 'Chrome บล็อกแท็บนี้ อนุญาต Pop-ups แล้วลองอีกครั้ง'; return; }
+    tab.opener = null;
+    $('shareBatchType').disabled = true;
+    $('shareBatchStart').disabled = true;
+    $('shareBatchCount').disabled = true;
+    $('openAllShareBatch').disabled = true;
+    shareBatchSequence.nextIndex += 1;
+    const opened = shareBatchSequence.nextIndex - shareBatchSequence.startIndex;
+    const total = shareBatchSequence.endIndex - shareBatchSequence.startIndex;
+    if (shareBatchSequence.nextIndex >= shareBatchSequence.endIndex) {
+      closeShareBatchModal();
+      return;
+    }
+    const next = shareBatchSources[shareBatchSequence.nextIndex];
+    $('shareBatchStatus').textContent = `เปิดแล้ว ${opened}/${total} · กราฟถัดไป: รายการ ${next.rowNumber} · ${next.label}`;
+    $('stepShareBatch').textContent = `เปิดกราฟถัดไป (${opened + 1}/${total})`;
+  }
+  function openAllShareCharts() {
+    const start = Math.max(0, Number($('shareBatchStart').value) - 1);
+    const count = Math.max(1, Number($('shareBatchCount').value) || 1);
+    const selected = shareBatchSources.slice(start, start + count);
+    const blocked = [];
+    let opened = 0;
+    selected.forEach((source) => {
+      const tab = window.open(source.url, '_blank');
+      if (!tab) { blocked.push(source); return; }
+      tab.opener = null;
+      opened += 1;
+    });
+    if (!blocked.length) { closeShareBatchModal(); return; }
+    shareBatchSources = blocked;
+    shareBatchSequence = { nextIndex: 0, startIndex: 0, endIndex: blocked.length };
+    $('shareBatchType').disabled = true;
+    $('shareBatchStart').disabled = true;
+    $('shareBatchCount').disabled = true;
+    $('openAllShareBatch').disabled = true;
+    $('stepShareBatch').textContent = `เปิดที่เหลือทีละแท็บ (1/${blocked.length})`;
+    $('shareBatchStatus').textContent = `เปิดได้ ${opened}/${selected.length} แท็บ · Chrome บล็อกอีก ${blocked.length} แท็บ ใช้ปุ่มเปิดทีละแท็บ หรืออนุญาต Pop-ups แล้วลองใหม่`;
+  }
   function renderTradeRows() {
     const rows = getVisibleTrades();
     $('shareTradesCount').textContent = `${rows.length} จาก ${trades.length} รายการ${trades.filter((trade) => trade.missed_entry).length ? ` · Miss Entry ${trades.filter((trade) => trade.missed_entry).length}` : ''}`;
@@ -210,6 +315,21 @@
     renderOverview();
   });
   ['shareSearch', 'shareInstrumentFilter', 'shareRecordTypeFilter'].forEach((id) => $(id).addEventListener(id === 'shareSearch' ? 'input' : 'change', renderTradeRows));
+  $('openShareBatchCharts').addEventListener('click', openShareBatchModal);
+  $('closeShareBatch').addEventListener('click', closeShareBatchModal);
+  $('cancelShareBatch').addEventListener('click', closeShareBatchModal);
+  $('shareBatchModal').addEventListener('click', (event) => { if (event.target === $('shareBatchModal')) closeShareBatchModal(); });
+  $('shareBatchType').addEventListener('change', refreshShareBatchSources);
+  $('shareBatchStart').addEventListener('change', updateShareBatchRange);
+  $('shareBatchCount').addEventListener('input', () => {
+    const available = shareBatchSources.length - Number($('shareBatchStart').value) + 1;
+    $('shareBatchCount').value = String(Math.max(1, Math.min(Number($('shareBatchCount').value) || 1, available)));
+  });
+  $('openAllShareBatch').addEventListener('click', openAllShareCharts);
+  $('stepShareBatch').addEventListener('click', openNextShareChart);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && $('shareBatchModal').classList.contains('open')) closeShareBatchModal();
+  });
   setView('overview');
   const config = window.REDLINE_SUPABASE_CONFIG;
   if (!token || !config || !window.supabase?.createClient) {

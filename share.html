@@ -53,12 +53,20 @@
     </section>
     <section class="share-view" id="shareTrades" hidden>
       <article class="panel share-trades-panel">
-        <div class="share-trades-heading"><div><div class="panel-title">รายการเทรด</div><div class="panel-subtitle" id="shareTradesCount">0 รายการ</div></div><div class="journal-actions"><label class="search-box"><span>⌕</span><input id="shareSearch" type="search" placeholder="ค้นหารายการ..." aria-label="ค้นหารายการ"></label><select class="table-filter" id="shareInstrumentFilter" aria-label="กรองตามสินทรัพย์"><option value="all">ทุกสินทรัพย์</option></select><select class="table-filter" id="shareRecordTypeFilter" aria-label="กรองประเภทบันทึก"><option value="all">ทุกประเภท</option><option value="trade">เทรดจริง</option><option value="missed">Miss Entry</option></select></div></div>
+        <div class="share-trades-heading"><div><div class="panel-title">รายการเทรด</div><div class="panel-subtitle" id="shareTradesCount">0 รายการ</div></div><div class="journal-actions"><button type="button" class="secondary-button share-batch-trigger" id="openShareBatchCharts">↗ เปิดหลายกราฟ</button><label class="search-box"><span>⌕</span><input id="shareSearch" type="search" placeholder="ค้นหารายการ..." aria-label="ค้นหารายการ"></label><select class="table-filter" id="shareInstrumentFilter" aria-label="กรองตามสินทรัพย์"><option value="all">ทุกสินทรัพย์</option></select><select class="table-filter" id="shareRecordTypeFilter" aria-label="กรองประเภทบันทึก"><option value="all">ทุกประเภท</option><option value="trade">เทรดจริง</option><option value="missed">Miss Entry</option></select></div></div>
         <div class="table-scroll"><table class="share-trades-table"><thead><tr><th>#</th><th>วัน / เวลา</th><th>Session</th><th>สินทรัพย์</th><th>ฝั่ง</th><th>ขนาด / หน่วย</th><th>ราคาเข้า / ออก</th><th>Setup</th><th>POI</th><th>Note</th><th>HTF</th><th>LTF</th><th>สถานะ / ผล</th><th>ผลลัพธ์ (R)</th><th>Max RR</th><th>Net P&amp;L</th></tr></thead><tbody id="shareTradeRows"></tbody></table></div>
         <div class="share-table-footer" id="shareTableSummary"></div>
       </article>
     </section>
     <footer class="share-footer">ข้อมูลนี้เป็นลิงก์สาธารณะ ผู้ที่มีลิงก์สามารถเปิดดูได้</footer>
   </main>
+  <div class="share-batch-backdrop" id="shareBatchModal" aria-hidden="true">
+    <section class="share-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="shareBatchTitle">
+      <div class="modal-header"><div><div class="eyebrow">TRADE CHARTS</div><h2 id="shareBatchTitle">เปิดกราฟหลายรายการ</h2><p class="panel-subtitle">เลือกประเภทกราฟ จุดเริ่มต้น และจำนวนจากรายการที่กรองอยู่</p></div><button class="close-button" type="button" id="closeShareBatch" aria-label="ปิด">×</button></div>
+      <div class="share-batch-fields"><label class="field"><span>ประเภทกราฟ</span><select id="shareBatchType"><option value="both">HTF และ LTF</option><option value="HTF">HTF เท่านั้น</option><option value="LTF">LTF เท่านั้น</option></select></label><label class="field"><span>เริ่มจากกราฟ</span><select id="shareBatchStart"></select></label><label class="field"><span>จำนวนกราฟที่จะเปิด</span><input id="shareBatchCount" type="number" min="1" step="1" value="1"></label></div>
+      <p class="share-batch-status" id="shareBatchStatus"></p>
+      <div class="modal-actions"><button type="button" class="secondary-button" id="cancelShareBatch">ปิด</button><button type="button" class="secondary-button" id="stepShareBatch">เปิดทีละแท็บ</button><button type="button" class="primary-button" id="openAllShareBatch">↗ เปิดทั้งหมด</button></div>
+    </section>
+  </div>
 </body>
 </html>

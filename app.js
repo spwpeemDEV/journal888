@@ -33,6 +33,7 @@
   let setupReturnToTrade = false;
   let pendingImages = [];
   let batchChartSources = [];
+  let batchChartsSequence = null;
   let pendingDeleteIds = new Set();
   let confirmResolver = null;
   let toastTimer;
@@ -1387,10 +1388,19 @@
   function closeBatchChartsModal() {
     $('batchChartsModal').classList.remove('open');
     $('batchChartsModal').setAttribute('aria-hidden', 'true');
+    batchChartsSequence = null;
+    $('batchChartsType').disabled = false;
+    $('batchChartsStart').disabled = false;
+    $('batchChartsCount').disabled = false;
+    $('confirmBatchCharts').disabled = false;
+    $('confirmBatchCharts').textContent = '↗ เปิดทั้งหมด';
+    $('stepBatchCharts').disabled = false;
+    $('stepBatchCharts').textContent = 'เปิดทีละแท็บ';
   }
   function getBatchChartSources() {
+    const selectedType = $('batchChartsType').value;
     const visibleRows = [...getVisibleTrades()].sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
-    return visibleRows.flatMap((trade, rowIndex) => chartLinksFor(trade).map(([label, url]) => ({
+    return visibleRows.flatMap((trade, rowIndex) => chartLinksFor(trade).filter(([label]) => selectedType === 'both' || label === selectedType).map(([label, url]) => ({
       label,
       url,
       rowNumber: rowIndex + 1,
@@ -1404,33 +1414,90 @@
     const countField = $('batchChartsCount');
     countField.max = String(available);
     countField.value = String(Math.max(1, Math.min(Number(countField.value) || 1, available)));
-    $('batchChartsAvailability').textContent = `จากกราฟ ${batchChartSources.length} ลิงก์ที่มีในรายการปัจจุบัน · เริ่มตำแหน่งนี้เปิดต่อได้ ${available} ลิงก์`;
+    $('batchChartsAvailability').textContent = `มี ${batchChartSources.length} กราฟตามประเภทที่เลือก · เริ่มตำแหน่งนี้เปิดต่อได้ ${available} กราฟ เบราว์เซอร์จะเปิดทีละแท็บ`;
+  }
+  function refreshBatchChartsSources() {
+    batchChartsSequence = null;
+    $('confirmBatchCharts').textContent = '↗ เปิดทั้งหมด';
+    $('stepBatchCharts').disabled = false;
+    $('stepBatchCharts').textContent = 'เปิดทีละแท็บ';
+    batchChartSources = getBatchChartSources();
+    if (!batchChartSources.length) {
+      $('batchChartsStart').innerHTML = '<option value="">ไม่พบกราฟประเภทนี้</option>';
+      $('batchChartsCount').value = '1';
+      $('batchChartsCount').max = '1';
+      $('batchChartsAvailability').textContent = 'ไม่มีลิงก์กราฟประเภทนี้ในรายการที่กรองอยู่';
+      $('confirmBatchCharts').disabled = true;
+      return;
+    }
+    $('confirmBatchCharts').disabled = false;
+    $('batchChartsStart').innerHTML = batchChartSources.map((source, index) => `<option value="${index + 1}">${index + 1}. รายการ ${source.rowNumber} · ${dateLabel(source.date)} · ${escapeHtml(source.instrument)} · ${source.label}</option>`).join('');
+    $('batchChartsStart').value = '1';
+    $('batchChartsCount').value = String(Math.min(Number($('batchChartsCount').value) || 5, batchChartSources.length));
+    updateBatchChartsRange();
   }
   function openBatchChartsModal() {
-    batchChartSources = getBatchChartSources();
-    if (!batchChartSources.length) { toast('ไม่มีลิงก์ HTF/LTF ในรายการที่แสดงอยู่'); return; }
-    $('batchChartsStart').innerHTML = batchChartSources.map((source, index) => `<option value="${index + 1}">${index + 1}. รายการ ${source.rowNumber} · ${dateLabel(source.date)} · ${escapeHtml(source.instrument)} · ${source.label}</option>`).join('');
-    $('batchChartsCount').value = String(Math.min(5, batchChartSources.length));
-    updateBatchChartsRange();
+    refreshBatchChartsSources();
+    const hasAnySources = getVisibleTrades().some((trade) => chartLinksFor(trade).length);
+    if (!hasAnySources) { toast('ไม่มีลิงก์กราฟในรายการที่กรองอยู่'); return; }
     $('batchChartsModal').classList.add('open');
     $('batchChartsModal').setAttribute('aria-hidden', 'false');
     $('batchChartsStart').focus();
   }
-  function openSelectedBatchCharts() {
+  function openNextBatchChart() {
+    if (!batchChartsSequence) {
+      const startIndex = Math.max(0, Number($('batchChartsStart').value) - 1);
+      const requested = Math.max(1, Number($('batchChartsCount').value) || 1);
+      batchChartsSequence = { nextIndex: startIndex, startIndex, endIndex: Math.min(batchChartSources.length, startIndex + requested) };
+    }
+    const source = batchChartSources[batchChartsSequence.nextIndex];
+    if (!source) { closeBatchChartsModal(); return; }
+    const tab = window.open(source.url, '_blank');
+    if (!tab) {
+      toast('เบราว์เซอร์บล็อกแท็บนี้ อนุญาต Pop-ups แล้วกดลองอีกครั้ง');
+      return;
+    }
+    tab.opener = null;
+    $('batchChartsType').disabled = true;
+    $('batchChartsStart').disabled = true;
+    $('batchChartsCount').disabled = true;
+    batchChartsSequence.nextIndex += 1;
+    const opened = batchChartsSequence.nextIndex - batchChartsSequence.startIndex;
+    const total = batchChartsSequence.endIndex - batchChartsSequence.startIndex;
+    if (batchChartsSequence.nextIndex >= batchChartsSequence.endIndex) {
+      closeBatchChartsModal();
+      toast(`เปิดกราฟครบ ${total} แท็บแล้ว`);
+      return;
+    }
+    $('batchChartsAvailability').textContent = `เปิดแล้ว ${opened}/${total} · กราฟถัดไป: รายการ ${batchChartSources[batchChartsSequence.nextIndex].rowNumber} · ${batchChartSources[batchChartsSequence.nextIndex].label}`;
+    $('stepBatchCharts').textContent = `เปิดกราฟถัดไป (${opened + 1}/${total})`;
+  }
+  function openAllBatchCharts() {
     const startIndex = Math.max(0, Number($('batchChartsStart').value) - 1);
     const requested = Math.max(1, Number($('batchChartsCount').value) || 1);
     const selected = batchChartSources.slice(startIndex, startIndex + requested);
+    const blocked = [];
     let opened = 0;
     selected.forEach((source) => {
       const tab = window.open(source.url, '_blank');
-      if (!tab) return;
+      if (!tab) { blocked.push(source); return; }
       tab.opener = null;
       opened += 1;
     });
-    closeBatchChartsModal();
-    if (opened === selected.length) toast(`เปิดกราฟ ${opened} แท็บแล้ว`);
-    else if (opened) toast(`เปิดได้ ${opened}/${selected.length} แท็บ · เบราว์เซอร์บล็อกบางแท็บ`);
-    else toast('เบราว์เซอร์บล็อกการเปิดหลายแท็บ กรุณาอนุญาต Pop-ups สำหรับเว็บไซต์นี้');
+    if (!blocked.length) {
+      closeBatchChartsModal();
+      toast(`เปิดกราฟครบ ${opened} แท็บแล้ว`);
+      return;
+    }
+    batchChartSources = blocked;
+    batchChartsSequence = { nextIndex: 0, startIndex: 0, endIndex: blocked.length };
+    $('batchChartsType').disabled = true;
+    $('batchChartsStart').disabled = true;
+    $('batchChartsCount').disabled = true;
+    $('confirmBatchCharts').disabled = true;
+    $('stepBatchCharts').textContent = `เปิดที่เหลือทีละแท็บ (1/${blocked.length})`;
+    $('batchChartsAvailability').textContent = `เปิดได้ ${opened}/${selected.length} แท็บ · เบราว์เซอร์บล็อกอีก ${blocked.length} แท็บ กด “เปิดที่เหลือทีละแท็บ” หรืออนุญาต Pop-ups แล้วลองใหม่`;
+    if (!opened) toast('Chrome บล็อก Pop-ups · อนุญาต Pop-ups เพื่อเปิดทั้งหมดในครั้งเดียว');
   }
   function updateInstrumentField() {
     const cfd = $('instrument').value === 'XAUUSD';
@@ -1894,12 +1961,14 @@
   $('closeBatchCharts').addEventListener('click', closeBatchChartsModal);
   $('cancelBatchCharts').addEventListener('click', closeBatchChartsModal);
   $('batchChartsModal').addEventListener('click', (event) => { if (event.target === $('batchChartsModal')) closeBatchChartsModal(); });
+  $('batchChartsType').addEventListener('change', refreshBatchChartsSources);
   $('batchChartsStart').addEventListener('change', updateBatchChartsRange);
   $('batchChartsCount').addEventListener('input', () => {
     const available = batchChartSources.length - Number($('batchChartsStart').value) + 1;
     $('batchChartsCount').value = String(Math.max(1, Math.min(Number($('batchChartsCount').value) || 1, available)));
   });
-  $('confirmBatchCharts').addEventListener('click', openSelectedBatchCharts);
+  $('confirmBatchCharts').addEventListener('click', openAllBatchCharts);
+  $('stepBatchCharts').addEventListener('click', openNextBatchChart);
   $('returnToTrade').addEventListener('click', () => {
     setupReturnToTrade = false;
     renderSetupOptions($('setup').value);
