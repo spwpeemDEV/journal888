@@ -639,7 +639,7 @@
       const setupCount = workspaceData(workspace)?.setups.length ?? loadWorkspaceSetups(workspace.id).length;
       const activeClass = workspace.id === activeWorkspaceId ? ' active' : '';
       const netClass = stats.net > 0 ? 'positive-text' : stats.net < 0 ? 'negative-text' : 'muted-text';
-      return `<article class="project-card${activeClass}"><div class="project-card-top"><span class="project-card-icon">▦</span><span class="project-status">${workspace.id === activeWorkspaceId ? 'กำลังใช้งาน' : 'พร้อมใช้งาน'}</span></div><h3>${escapeHtml(workspace.name)}</h3><div class="project-card-stats"><span><small>เทรด</small><strong>${stats.count}</strong></span><span><small>Setup</small><strong>${setupCount}</strong></span></div><div class="project-card-metrics"><span><small>Win rate</small><strong>${stats.count ? `${stats.winRate.toFixed(0)}%` : '—'}</strong></span><span><small>กำไร / ขาดทุน</small><strong class="${netClass}">${money(stats.net, 0)}</strong></span><span><small>แพ้ติดกัน</small><strong>${stats.maxLossStreak} ไม้</strong></span><span><small>Avg R</small><strong>${stats.avgR == null ? '—' : `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`}</strong></span><span><small>Max RR</small><strong>${stats.maxRR == null ? '—' : `+${stats.maxRR.toFixed(2)}R`}</strong></span></div><div class="project-card-actions"><button type="button" class="primary-button" data-select-project="${escapeHtml(workspace.id)}">${workspace.id === activeWorkspaceId ? 'เปิดภาพรวม' : 'ใช้โปรเจกต์นี้'}</button>${workspaces.length > 1 ? `<button type="button" class="project-action-button danger" data-delete-workspace="${escapeHtml(workspace.id)}">ลบ</button>` : ''}</div></article>`;
+      return `<article class="project-card${activeClass}"><div class="project-card-top"><span class="project-card-icon">▦</span><span class="project-status">${workspace.id === activeWorkspaceId ? 'กำลังใช้งาน' : 'พร้อมใช้งาน'}</span></div><h3>${escapeHtml(workspace.name)}</h3><div class="project-card-stats"><span><small>เทรด</small><strong>${stats.count}</strong></span><span><small>Setup</small><strong>${setupCount}</strong></span></div><div class="project-card-metrics"><span><small>Win rate</small><strong>${stats.count ? `${stats.winRate.toFixed(0)}%` : '—'}</strong></span><span><small>กำไร / ขาดทุน</small><strong class="${netClass}">${money(stats.net, 0)}</strong></span><span><small>แพ้ติดกัน</small><strong>${stats.maxLossStreak} ไม้</strong></span><span><small>Avg R</small><strong>${stats.avgR == null ? '—' : `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`}</strong></span><span><small>Max RR</small><strong>${stats.maxRR == null ? '—' : `+${stats.maxRR.toFixed(2)}R`}</strong></span></div><div class="project-card-actions"><button type="button" class="primary-button" data-select-project="${escapeHtml(workspace.id)}">${workspace.id === activeWorkspaceId ? 'เปิดภาพรวม' : 'ใช้โปรเจกต์นี้'}</button><button type="button" class="secondary-button project-share-button" data-share-workspace="${escapeHtml(workspace.id)}">↗ แชร์ภาพรวมและรายการ</button><button type="button" class="project-action-button" data-revoke-share="${escapeHtml(workspace.id)}">ปิดลิงก์แชร์</button>${workspaces.length > 1 ? `<button type="button" class="project-action-button danger" data-delete-workspace="${escapeHtml(workspace.id)}">ลบ</button>` : ''}</div></article>`;
     }).join('');
   }
   function formatAccountTimestamp(value) {
@@ -676,6 +676,32 @@
       $('refreshAccounts').disabled = false;
       endLoadingOperation(loadingToken);
     }
+  }
+  async function manageWorkspaceShare(action, workspaceId) {
+    if (!supabaseClient || !activeWorkspaceUserId) { toast('กรุณาเข้าสู่ระบบก่อนจัดการลิงก์แชร์'); return; }
+    if (action === 'revoke' && !window.confirm('ปิดลิงก์แชร์ของโปรเจกต์นี้หรือไม่? ผู้ที่มีลิงก์จะเปิดดูข้อมูลไม่ได้อีก')) return;
+    const loadingToken = beginLoadingOperation();
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('workspace-share', {
+        body: { action, workspaceId }
+      });
+      if (error) throw error;
+      if (action === 'revoke') {
+        toast(data?.revoked ? 'ปิดลิงก์แชร์แล้ว' : 'โปรเจกต์นี้ยังไม่มีลิงก์แชร์');
+        return;
+      }
+      if (!data?.token) throw new Error('ไม่ได้รับลิงก์แชร์จาก Supabase');
+      const shareUrl = new URL('share.html', window.location.href);
+      shareUrl.hash = data.token;
+      try {
+        await navigator.clipboard.writeText(shareUrl.toString());
+        toast('คัดลอกลิงก์แชร์แล้ว · เปิดดูได้ทั้งภาพรวมและรายการเทรด');
+      } catch {
+        window.prompt('คัดลอกลิงก์แชร์นี้', shareUrl.toString());
+      }
+    } catch (error) {
+      toast(`จัดการลิงก์แชร์ไม่สำเร็จ: ${error.message || 'ตรวจสอบการ Deploy workspace-share'}`);
+    } finally { endLoadingOperation(loadingToken); }
   }
   function switchWorkspace(id) {
     if (demoMode && demoPortfolioMode) { switchDemoWorkspace(id); return; }
@@ -1725,6 +1751,10 @@
   $('closeWorkspaceManager').addEventListener('click', closeWorkspaceManager);
   $('workspaceRows').addEventListener('click', manageWorkspaceAction);
   $('projectsGrid').addEventListener('click', async (event) => {
+    const shareWorkspaceId = event.target.closest('[data-share-workspace]')?.dataset.shareWorkspace;
+    if (shareWorkspaceId) { await manageWorkspaceShare('create', shareWorkspaceId); return; }
+    const revokeWorkspaceId = event.target.closest('[data-revoke-share]')?.dataset.revokeShare;
+    if (revokeWorkspaceId) { await manageWorkspaceShare('revoke', revokeWorkspaceId); return; }
     const projectId = event.target.closest('[data-select-project]')?.dataset.selectProject;
     if (projectId) {
       switchWorkspace(projectId);

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101011">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Redline — Shared Trading Journal</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./share.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="./supabase-config.js" defer></script>
+  <script src="./share.js" defer></script>
+</head>
+<body class="share-page">
+  <main class="share-main">
+    <header class="share-topbar">
+      <a class="brand share-brand" href="./index.html" aria-label="Redline Trading Journal">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span><strong>REDLINE</strong><small>TRADING JOURNAL</small></span>
+      </a>
+      <span class="share-public-label"><i></i> PUBLIC · READ ONLY</span>
+    </header>
+    <section class="share-heading">
+      <div class="eyebrow"><span class="live-dot"></span> SHARED TRADING JOURNAL</div>
+      <h1 id="shareWorkspaceName">กำลังโหลดข้อมูล…</h1>
+      <p>ภาพรวมผลการเทรดและประวัติรายการ · แสดงข้อมูลแบบอ่านอย่างเดียว</p>
+    </section>
+    <nav class="share-tabs" aria-label="ส่วนที่แชร์">
+      <button type="button" class="active" data-share-view="overview">ภาพรวม</button>
+      <button type="button" data-share-view="trades">รายการเทรด</button>
+    </nav>
+    <p class="share-status" id="shareStatus" role="status" aria-live="polite">กำลังโหลดข้อมูล…</p>
+    <section class="share-view" id="shareOverview" hidden>
+      <div class="share-stat-grid" id="shareStats"></div>
+      <article class="panel share-chart-panel">
+        <div class="panel-heading"><div><div class="panel-title">ผลประกอบการสะสม</div><div class="panel-subtitle">คำนวณจากรายการเทรดใน workspace นี้</div></div><strong id="shareChartTotal">$0.00</strong></div>
+        <div class="share-chart" id="shareChart"></div>
+      </article>
+      <article class="panel share-breakdown-panel">
+        <div class="panel-heading"><div><div class="panel-title">แยกตามสินทรัพย์</div><div class="panel-subtitle">จำนวนรายการและกำไร/ขาดทุนสุทธิ</div></div></div>
+        <div class="share-instruments" id="shareInstruments"></div>
+      </article>
+    </section>
+    <section class="share-view" id="shareTrades" hidden>
+      <article class="panel share-trades-panel">
+        <div class="share-trades-heading"><div><div class="panel-title">รายการเทรด</div><div class="panel-subtitle" id="shareTradesCount">0 รายการ</div></div></div>
+        <div class="table-scroll"><table class="share-trades-table"><thead><tr><th>วัน / เวลา</th><th>สินทรัพย์</th><th>ฝั่ง</th><th>ขนาด</th><th>ราคาเข้า / ออก</th><th>Setup</th><th>POI</th><th>ผลลัพธ์</th><th>R</th><th>Net P&amp;L</th></tr></thead><tbody id="shareTradeRows"></tbody></table></div>
+      </article>
+    </section>
+    <footer class="share-footer">ข้อมูลนี้เป็นลิงก์สาธารณะ ผู้ที่มีลิงก์สามารถเปิดดูได้</footer>
+  </main>
+</body>
+</html>
