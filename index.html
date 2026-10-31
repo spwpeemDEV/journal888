@@ -231,6 +231,20 @@
           </span>
         </label>
         <button class="primary-button login-submit" type="submit">เข้าสู่ระบบ <span>→</span></button>
+        <p class="auth-switch-copy">ยังไม่มีบัญชีใช่ไหม? <button type="button" class="auth-switch" id="showSignup">สมัครสมาชิก</button></p>
+      </form>
+      <form class="login-form" id="signupForm" hidden>
+        <label class="login-field" for="signupEmail">Email
+          <input id="signupEmail" name="email" type="email" autocomplete="email" placeholder="name@example.com" required>
+        </label>
+        <label class="login-field" for="signupPassword">Password
+          <input id="signupPassword" name="password" type="password" autocomplete="new-password" placeholder="ตั้งรหัสผ่าน" minlength="6" required>
+        </label>
+        <label class="login-field" for="signupConfirmPassword">ยืนยัน Password
+          <input id="signupConfirmPassword" name="confirmPassword" type="password" autocomplete="new-password" placeholder="กรอกรหัสผ่านอีกครั้ง" minlength="6" required>
+        </label>
+        <button class="primary-button login-submit" type="submit">สมัครสมาชิก <span>→</span></button>
+        <p class="auth-switch-copy">มีบัญชีอยู่แล้ว? <button type="button" class="auth-switch" id="showLogin">เข้าสู่ระบบ</button></p>
       </form>
       <p class="login-status" id="loginStatus" role="status" aria-live="polite">กำลังตรวจสอบ session…</p>
     </section>

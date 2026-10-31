@@ -15,6 +15,9 @@ body.app-busy .app-shell{pointer-events:none}
 .login-heading p{margin:0;color:#85858b;font-size:11px}
 .login-form{display:grid;gap:16px;margin-top:26px}
 .login-form[hidden]{display:none!important}
+.auth-switch-copy{margin:0;text-align:center;color:#85858b;font-size:10px}
+.auth-switch{border:0;padding:0;background:none;color:#e56871;font:inherit;cursor:pointer}
+.auth-switch:hover{color:#ff9299;text-decoration:underline}
 .login-field{display:grid;gap:7px;color:#b9b9be;font-size:10px;font-weight:500}
 .login-field input{width:100%;height:42px;padding:0 12px;border:1px solid #353538;border-radius:7px;background:#111112;color:#f1f1f2;outline:none;font-size:11px}
 .login-field input::placeholder{color:#626268}

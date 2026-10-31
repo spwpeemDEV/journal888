@@ -38,6 +38,7 @@
   let chartMode = 'pnl';
   let activeWorkspaceUserId = null;
   let isAdminUser = false;
+  let authMode = 'login';
   let accountUsersPage = 1;
   let accountUsersLoading = false;
   const ACCOUNT_USERS_PER_PAGE = 50;
@@ -63,6 +64,15 @@
     syncLoadingOverlay();
   }
   let startupLoadingToken = beginLoadingOperation();
+  function setAuthMode(mode) {
+    authMode = mode === 'signup' ? 'signup' : 'login';
+    $('loginForm').hidden = authMode !== 'login';
+    $('signupForm').hidden = authMode !== 'signup';
+    $('loginTitle').textContent = authMode === 'signup' ? 'สร้างบัญชีใหม่' : 'ยินดีต้อนรับกลับ';
+    $('loginDescription').textContent = authMode === 'signup' ? 'สมัครสมาชิกเพื่อเริ่มใช้ Trading Journal' : 'เข้าสู่ระบบเพื่อไปยัง Trading Journal ของคุณ';
+    $('loginStatus').textContent = authMode === 'signup' ? 'กรอกข้อมูลเพื่อสมัครสมาชิก' : 'เข้าสู่ระบบด้วย Email และ Password';
+    $('loginStatus').classList.remove('login-status-ready');
+  }
 
   function accessTokenClaims(token) {
     try {
@@ -565,9 +575,7 @@
       document.body.classList.add('auth-locked');
       if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
       $('loginBackdrop').hidden = false;
-      $('loginForm').hidden = false;
-      $('loginStatus').textContent = 'เข้าสู่ระบบด้วย Email และ Password';
-      $('loginStatus').classList.remove('login-status-ready');
+      setAuthMode('login');
       return;
     }
     if (activeWorkspaceUserId === user.id) return;
@@ -577,6 +585,7 @@
     document.body.classList.add('auth-locked');
     $('loginBackdrop').hidden = true;
     $('loginForm').hidden = true;
+    $('signupForm').hidden = true;
     $('loginStatus').textContent = 'กำลังโหลดโปรเจกต์จาก Supabase…';
     $('loginStatus').classList.remove('login-status-ready');
     try {
@@ -593,7 +602,7 @@
       if (generation !== workspaceLoadGeneration) return;
       activeWorkspaceUserId = null;
       $('loginBackdrop').hidden = false;
-      $('loginForm').hidden = false;
+      setAuthMode('login');
       $('loginStatus').textContent = `โหลดโปรเจกต์ไม่สำเร็จ: ${error.message || 'ตรวจสอบตาราง workspaces และ RLS policy'}`;
       $('loginStatus').classList.add('login-status-ready');
     } finally {
@@ -1916,6 +1925,8 @@
     $('toggleLoginPassword').setAttribute('aria-label', showPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน');
     passwordInput.focus();
   });
+  $('showSignup').addEventListener('click', () => setAuthMode('signup'));
+  $('showLogin').addEventListener('click', () => setAuthMode('login'));
   $('loginForm').addEventListener('submit', (event) => {
     event.preventDefault();
     if (!supabaseClient) {
@@ -1948,6 +1959,49 @@
       $('loginStatus').classList.add('login-status-ready');
     });
   });
+  $('signupForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!supabaseClient) {
+      $('loginStatus').textContent = 'โหลด Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
+      $('loginStatus').classList.add('login-status-ready');
+      return;
+    }
+    const email = $('signupEmail').value.trim();
+    const password = $('signupPassword').value;
+    const confirmPassword = $('signupConfirmPassword').value;
+    if (password !== confirmPassword) {
+      $('loginStatus').textContent = 'Password และยืนยัน Password ไม่ตรงกัน';
+      $('loginStatus').classList.add('login-status-ready');
+      $('signupConfirmPassword').focus();
+      return;
+    }
+    const submitButton = $('signupForm').querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    $('loginStatus').textContent = 'กำลังสร้างบัญชี…';
+    $('loginStatus').classList.remove('login-status-ready');
+    const loadingToken = beginLoadingOperation();
+    supabaseClient.auth.signUp({ email, password }).then(({ data, error }) => {
+      if (error) {
+        $('loginStatus').textContent = error.message === 'User already registered'
+          ? 'Email นี้มีบัญชีอยู่แล้ว ลองเข้าสู่ระบบ'
+          : `สมัครสมาชิกไม่สำเร็จ: ${error.message}`;
+        $('loginStatus').classList.add('login-status-ready');
+        return;
+      }
+      if (data?.session) {
+        $('loginStatus').textContent = 'สมัครสำเร็จ กำลังเข้าสู่ระบบ…';
+      } else {
+        $('loginStatus').textContent = 'สมัครบัญชีแล้ว กรุณาตรวจสอบ Email เพื่อยืนยันก่อนเข้าสู่ระบบ';
+        $('loginStatus').classList.add('login-status-ready');
+      }
+    }).catch(() => {
+      $('loginStatus').textContent = 'เชื่อมต่อ Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
+      $('loginStatus').classList.add('login-status-ready');
+    }).finally(() => {
+      submitButton.disabled = false;
+      endLoadingOperation(loadingToken);
+    });
+  });
   $('signOutButton').addEventListener('click', () => {
     if (supabaseClient) {
       const loadingToken = beginLoadingOperation();
@@ -1962,7 +2016,7 @@
       if (error) {
         if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
         $('loginBackdrop').hidden = false;
-        $('loginForm').hidden = false;
+        setAuthMode('login');
         $('loginStatus').textContent = `ตรวจสอบ session ไม่สำเร็จ: ${error.message}`;
         $('loginStatus').classList.add('login-status-ready');
         return;
@@ -1971,14 +2025,14 @@
     }).catch(() => {
       if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
       $('loginBackdrop').hidden = false;
-      $('loginForm').hidden = false;
+      setAuthMode('login');
       $('loginStatus').textContent = 'เชื่อมต่อ Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
       $('loginStatus').classList.add('login-status-ready');
     });
   } else {
     if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
     $('loginBackdrop').hidden = false;
-    $('loginForm').hidden = false;
+    setAuthMode('login');
     $('loginStatus').textContent = 'โหลด Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
     $('loginStatus').classList.add('login-status-ready');
   }
