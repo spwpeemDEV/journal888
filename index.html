@@ -29,10 +29,11 @@
         <a class="nav-item active" data-view="overview" href="#overview"><span class="nav-icon">◫</span> ภาพรวม <span class="nav-indicator"></span></a>
         <a class="nav-item" data-view="trades" href="#trades"><span class="nav-icon">☷</span> รายการเทรด <span class="nav-count" id="navTradeCount">0</span></a>
         <a class="nav-item" data-view="setups" href="#setups"><span class="nav-icon">⚙</span> ตั้งค่า <span class="nav-count" id="navSetupCount">0</span></a>
+        <a class="nav-item" data-view="accounts" id="accountsNav" href="#accounts" hidden><span class="nav-icon">♙</span> Account</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="account-card"><span class="account-avatar">U</span><div class="account-copy"><strong id="signedInEmail">ผู้ใช้งาน</strong></div><button type="button" class="sign-out-button" id="signOutButton">ออกจากระบบ</button></div>
-        <div class="side-note"><span class="tiny-lock">▣</span> โปรเจกต์และรายการเทรด Sync ผ่าน Supabase</div>
+        <div class="side-note"><span class="tiny-lock">▣</span> ข้อมูลโปรเจกต์ เทรด และตัวเลือก Sync ผ่าน Supabase</div>
       </div>
     </aside>
 
@@ -47,7 +48,7 @@
       <section class="view-panel" id="overviewView">
       <section class="page-heading">
         <div><div class="eyebrow"><span class="live-dot"></span> TRADING PERFORMANCE</div><h1>ภาพรวมการเทรด</h1><p>ทุกออเดอร์มีบทเรียน — มองเห็นตัวเลข แล้วพัฒนาทีละวัน</p></div>
-        <div class="period-control"><span class="period-icon">◷</span><select id="periodFilter" aria-label="ช่วงเวลาสรุป"><option value="all">ทุกช่วงเวลา</option><option value="month">เดือนนี้</option><option value="week">7 วันล่าสุด</option></select><span class="select-chevron">⌄</span></div>
+        <div class="overview-controls"><button type="button" class="secondary-button overview-refresh-button" id="refreshOverview" aria-label="รีเฟรชข้อมูลภาพรวม"><span aria-hidden="true">↻</span> รีเฟรช</button><div class="period-control"><span class="period-icon">◷</span><select id="periodFilter" aria-label="ช่วงเวลาสรุป"><option value="all">ทุกช่วงเวลา</option><option value="month">เดือนนี้</option><option value="week">7 วันล่าสุด</option></select><span class="select-chevron">⌄</span></div></div>
       </section>
 
       <section class="stat-grid" aria-label="สถิติการเทรด">
@@ -138,6 +139,15 @@
           <div class="setup-footnote" id="poiFootnote" hidden>ลบ POI จะไม่ลบรายการเทรดเดิม แต่รายการเหล่านั้นจะไม่มี POI กำกับ</div>
         </section>
       </section>
+      <section class="view-panel" id="accountsView" hidden>
+        <section class="page-heading"><div><div class="eyebrow"><span class="live-dot"></span> ADMINISTRATION</div><h1>Account</h1><p>จัดการบัญชีผู้ใช้งาน</p></div></section>
+        <section class="panel setup-page-panel account-admin-panel">
+          <div class="panel-heading account-list-heading"><div><div class="panel-title">บัญชีผู้ใช้</div><div class="panel-subtitle">ดูบัญชีและเวลาเข้าสู่ระบบล่าสุด</div></div><button type="button" class="secondary-button" id="refreshAccounts">↻ รีเฟรช</button></div>
+          <p class="account-list-status" id="accountsStatus" role="status" aria-live="polite">กดรีเฟรชเพื่อโหลดบัญชี</p>
+          <div class="table-scroll account-table-scroll"><table class="account-table"><thead><tr><th>Email</th><th>สร้างบัญชี</th><th>Login ล่าสุด</th></tr></thead><tbody id="accountsRows"></tbody></table></div>
+          <div class="account-pagination"><span id="accountsPageLabel">หน้า 1</span><div><button type="button" class="secondary-button" id="previousAccountsPage" disabled>← ก่อนหน้า</button><button type="button" class="secondary-button" id="nextAccountsPage" disabled>ถัดไป →</button></div></div>
+        </section>
+      </section>
       <footer class="page-footer"><span><i class="footer-dot"></i> ระบบพร้อมใช้งาน</span><span>ข้อมูล Sync ผ่าน Supabase · <button id="backupButton">สำรองข้อมูล</button></span></footer>
     </main>
     <button class="bulk-delete-button" id="deleteSelectedTrades" hidden><span>⌫</span> ลบรายการที่เลือก (0)</button>
@@ -164,7 +174,7 @@
           <label class="field"><span>Stop Loss <b>*</b></span><input id="stopPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาที่จะตัดขาดทุน"></label>
           <label class="field"><span>Take Profit <b>*</b></span><input id="targetPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาเป้าหมายทำกำไร"></label>
           <label class="field trade-only-field"><span>Max RR (R)</span><input id="maxRR" type="text" inputmode="decimal" autocomplete="off" placeholder="เช่น 2.5"><small>กำไรสูงสุดที่เคยเห็น เทียบกับ Risk 1R (ไม่บังคับ)</small></label>
-          <div class="field trade-only-field" id="riskSizingField"><span>กำหนด Risk แล้วคำนวณจำนวน</span><div class="risk-sizing-controls"><label class="risk-amount-input"><span class="visually-hidden">Risk สูงสุดต่อรายการ (USD)</span><span class="risk-currency">$</span><input id="riskBudget" type="text" inputmode="decimal" autocomplete="off" placeholder="Risk สูงสุด เช่น 100"></label></div><small id="riskSizingFeedback">ใส่ Risk, Entry และ SL เพื่อคำนวณจำนวนอัตโนมัติ · ค่าธรรมเนียมและ slippage ยังไม่รวม</small></div>
+          <div class="field trade-only-field" id="riskSizingField"><span>กำหนด Risk แล้วคำนวณจำนวน</span><div class="risk-sizing-controls"><div class="risk-amount-input"><label class="visually-hidden" for="riskBudget">Risk สูงสุดต่อรายการ (USD)</label><span class="risk-currency">$</span><input id="riskBudget" type="text" inputmode="decimal" autocomplete="off" placeholder="Risk สูงสุด เช่น 100"><button type="button" id="calculateRiskButton" class="risk-calculate-button">คำนวณ</button></div></div><small id="riskSizingFeedback">ใส่ Risk, Entry และ SL แล้วกดคำนวณหรือออกจากช่อง Risk · ค่าธรรมเนียมและ slippage ยังไม่รวม</small></div>
           <label class="field trade-only-field" id="feesField"><span>ค่าธรรมเนียมรวม (USD)</span><input id="fees" type="text" inputmode="decimal" autocomplete="off" value="0"></label>
           <label class="field trade-only-field" id="exitPriceField"><span>ราคาออกจริง <b>*</b></span><input id="exitPrice" type="text" inputmode="decimal" autocomplete="off" required placeholder="ราคาออกจากตลาดจริง"></label>
           <label class="field"><span>ทำตามแผน?</span><select id="followedPlan"><option value="yes">ทำตามแผน</option><option value="no">ผิดแผน</option></select></label>
@@ -183,7 +193,7 @@
       <form class="setup-add-form" id="workspaceForm"><input id="workspaceName" type="text" maxlength="50" placeholder="เช่น XAUUSD Retest, NQ Scalping" autocomplete="off" required><button class="primary-button" type="submit">＋ สร้างโปรเจกต์</button></form>
       <div class="setup-list-heading"><span>โปรเจกต์ของฉัน</span><span id="workspaceCount"></span></div>
       <div class="setup-list workspace-list" id="workspaceRows"></div>
-      <div class="setup-footnote">ลบโปรเจกต์จะลบรายการเทรดใน Supabase และ Setup ที่บันทึกไว้ในเบราว์เซอร์นี้อย่างถาวร</div>
+      <div class="setup-footnote">ลบโปรเจกต์จะลบรายการเทรด Setup และ POI ใน Supabase อย่างถาวร</div>
     </section>
   </div>
   <div class="trades-loading" id="tradesLoading" role="status" aria-live="polite" hidden><span class="trades-spinner" aria-hidden="true"></span><span>Loading...</span></div>
@@ -196,10 +206,6 @@
       <p class="confirm-message" id="confirmMessage"></p><p class="confirm-detail" id="confirmDetail"></p>
       <div class="modal-actions"><button class="secondary-button" id="confirmCancel" type="button">ยกเลิก</button><button class="danger-confirm-button" id="confirmAccept" type="button"><span>⌫</span><span id="confirmAcceptLabel">ลบรายการ</span></button></div>
     </section>
-  </div>
-  <div class="auth-startup" id="authStartup" role="status" aria-live="polite">
-    <span class="auth-spinner" aria-hidden="true"></span>
-    <small>Loading...</small>
   </div>
   <div class="login-backdrop" id="loginBackdrop" hidden>
     <section class="login-modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle" aria-describedby="loginDescription">

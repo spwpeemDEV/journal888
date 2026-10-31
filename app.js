@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  const SETUP_STORAGE_KEY = 'redline-trading-journal:setups:v1';
-  const POI_STORAGE_KEY = 'redline-trading-journal:pois:v1';
+  const LEGACY_SETUP_STORAGE_KEY = 'redline-trading-journal:setups:v1';
+  const LEGACY_POI_STORAGE_KEY = 'redline-trading-journal:pois:v1';
   const SETTINGS_STORAGE_KEY = 'redline-trading-journal:settings:v1';
   const WORKSPACES_STORAGE_KEY = 'redline-trading-journal:workspaces:v1';
   const ACTIVE_WORKSPACE_KEY = 'redline-trading-journal:active-workspace:v1';
@@ -21,8 +21,8 @@
   let activeWorkspaceId = localStorage.getItem(ACTIVE_WORKSPACE_KEY) || workspaces[0].id;
   if (!workspaces.some((workspace) => workspace.id === activeWorkspaceId)) activeWorkspaceId = workspaces[0].id;
   let trades = loadWorkspaceTrades(activeWorkspaceId);
-  let setups = loadWorkspaceSetups(activeWorkspaceId);
-  let pois = loadWorkspacePois(activeWorkspaceId);
+  let setups = [...DEFAULT_SETUPS];
+  let pois = [...DEFAULT_POIS];
   let settings = loadWorkspaceSettings(activeWorkspaceId);
   let demoMode = false;
   let demoPortfolioMode = false;
@@ -37,6 +37,10 @@
   let toastTimer;
   let chartMode = 'pnl';
   let activeWorkspaceUserId = null;
+  let isAdminUser = false;
+  let accountUsersPage = 1;
+  let accountUsersLoading = false;
+  const ACCOUNT_USERS_PER_PAGE = 50;
   let workspaceLoadGeneration = 0;
   let tradeFetchGeneration = 0;
   const loadingOperations = new Set();
@@ -58,13 +62,29 @@
     loadingOperations.delete(token);
     syncLoadingOverlay();
   }
+  let startupLoadingToken = beginLoadingOperation();
 
-  function loadSetups() {
+  function accessTokenClaims(token) {
     try {
-      const saved = JSON.parse(localStorage.getItem(SETUP_STORAGE_KEY) || 'null');
-      return Array.isArray(saved) && saved.length ? [...new Set(saved.filter((item) => typeof item === 'string' && item.trim()))] : [...DEFAULT_SETUPS];
-    } catch { return [...DEFAULT_SETUPS]; }
+      const payload = String(token || '').split('.')[1];
+      if (!payload) return {};
+      const base64 = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=');
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    } catch { return {}; }
   }
+  function sessionHasAdminRole(session) {
+    const claims = accessTokenClaims(session?.access_token);
+    const metadata = session?.user?.app_metadata || {};
+    const roles = [claims.user_role, claims.app_metadata?.user_role, claims.app_metadata?.role, metadata.user_role, metadata.role, ...(Array.isArray(claims.app_metadata?.roles) ? claims.app_metadata.roles : []), ...(Array.isArray(metadata.roles) ? metadata.roles : [])];
+    return roles.some((role) => String(role || '').toLowerCase() === 'admin');
+  }
+  function updateAdminNavigation(session) {
+    isAdminUser = sessionHasAdminRole(session);
+    $('accountsNav').hidden = !isAdminUser;
+    if (!isAdminUser && viewFromHash() === 'accounts') switchView('overview');
+  }
+
   function loadWorkspaces() {
     try {
       const saved = JSON.parse(localStorage.getItem(WORKSPACES_STORAGE_KEY) || 'null');
@@ -77,28 +97,33 @@
     } catch { return []; }
   }
   function projectDataKey(id, kind) {
-    if (id === 'journal-default') {
-      if (kind === 'setups') return SETUP_STORAGE_KEY;
-      if (kind === 'pois') return POI_STORAGE_KEY;
-      if (kind === 'settings') return SETTINGS_STORAGE_KEY;
-    }
+    if (id === 'journal-default' && kind === 'settings') return SETTINGS_STORAGE_KEY;
     return `${PROJECT_DATA_PREFIX}${encodeURIComponent(id)}:${kind}`;
+  }
+  function legacyWorkspaceOptionKey(id, kind) {
+    if (id === 'journal-default') return kind === 'setup' ? LEGACY_SETUP_STORAGE_KEY : LEGACY_POI_STORAGE_KEY;
+    return `${PROJECT_DATA_PREFIX}${encodeURIComponent(id)}:${kind === 'setup' ? 'setups' : 'pois'}`;
+  }
+  function readLegacyOptionKey(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      const values = JSON.parse(raw || 'null');
+      return Array.isArray(values) ? [...new Set(values.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim()))] : null;
+    } catch { return null; }
+  }
+  function readLegacyWorkspaceOptions(id, kind) {
+    return readLegacyOptionKey(legacyWorkspaceOptionKey(id, kind));
   }
   function loadWorkspaceTrades(id) {
     return workspaces.find((workspace) => workspace.id === id)?.tradeRecords || [];
   }
   function loadWorkspaceSetups(id) {
-    if (id === 'journal-default') return loadSetups();
-    try {
-      const saved = JSON.parse(localStorage.getItem(projectDataKey(id, 'setups')) || 'null');
-      return Array.isArray(saved) && saved.length ? [...new Set(saved.filter((item) => typeof item === 'string' && item.trim()))] : [...DEFAULT_SETUPS];
-    } catch { return [...DEFAULT_SETUPS]; }
+    const workspace = workspaces.find((item) => item.id === id);
+    return workspaceData(workspace)?.setups || workspace?.setups || [...DEFAULT_SETUPS];
   }
   function loadWorkspacePois(id) {
-    try {
-      const saved = JSON.parse(localStorage.getItem(projectDataKey(id, 'pois')) || 'null');
-      return Array.isArray(saved) && saved.length ? [...new Set(saved.filter((item) => typeof item === 'string' && item.trim()))] : [...DEFAULT_POIS];
-    } catch { return [...DEFAULT_POIS]; }
+    const workspace = workspaces.find((item) => item.id === id);
+    return workspaceData(workspace)?.pois || workspace?.pois || [...DEFAULT_POIS];
   }
   function normalizeSettings(raw) {
     const data = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
@@ -329,8 +354,6 @@
   function persistWorkspaceState() {
     const active = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
     if (active) {
-      localStorage.setItem(projectDataKey(activeWorkspaceId, 'setups'), JSON.stringify(setups));
-      localStorage.setItem(projectDataKey(activeWorkspaceId, 'pois'), JSON.stringify(pois));
       localStorage.setItem(projectDataKey(activeWorkspaceId, 'settings'), JSON.stringify(settings));
       active.tradeRecords = trades;
       active.tradeCount = trades.length;
@@ -386,6 +409,93 @@
       endLoadingOperation(loadingToken);
     }
   }
+  async function syncWorkspaceOptions(targetWorkspaces, generation = workspaceLoadGeneration, userId = activeWorkspaceUserId) {
+    if (!supabaseClient || !targetWorkspaces.length) return;
+    const ids = targetWorkspaces.map((workspace) => workspace.id);
+    const { data, error } = await supabaseClient.from('workspace_options')
+      .select('id, workspace_id, kind, name, sort_order')
+      .in('workspace_id', ids)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    if (generation !== workspaceLoadGeneration || userId !== activeWorkspaceUserId) return;
+    const rowsByWorkspace = new Map(ids.map((id) => [id, { setup: [], poi: [] }]));
+    (data || []).forEach((row) => {
+      const options = rowsByWorkspace.get(row.workspace_id);
+      if (options && (row.kind === 'setup' || row.kind === 'poi')) options[row.kind].push(row);
+    });
+    const rowsToInsert = [];
+    const legacyKeysToRemove = [];
+    const savedWorkspaceId = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
+    const globalLegacyTargetId = targetWorkspaces.some((workspace) => workspace.id === savedWorkspaceId)
+      ? savedWorkspaceId
+      : targetWorkspaces[0].id;
+    targetWorkspaces.forEach((workspace) => {
+      const grouped = rowsByWorkspace.get(workspace.id);
+      for (const [kind, defaults] of [['setup', DEFAULT_SETUPS], ['poi', DEFAULT_POIS]]) {
+        let legacy = readLegacyWorkspaceOptions(workspace.id, kind) || [];
+        if (!legacy.length && workspace.id === globalLegacyTargetId) {
+          legacy = readLegacyOptionKey(kind === 'setup' ? LEGACY_SETUP_STORAGE_KEY : LEGACY_POI_STORAGE_KEY) || [];
+          legacyKeysToRemove.push(kind === 'setup' ? LEGACY_SETUP_STORAGE_KEY : LEGACY_POI_STORAGE_KEY);
+        }
+        const existingNames = new Set(grouped[kind].map((row) => row.name.toLocaleLowerCase()));
+        const optionsToAdd = grouped[kind].length ? legacy.filter((name) => !existingNames.has(name.toLocaleLowerCase())) : (legacy.length ? legacy : defaults);
+        optionsToAdd.forEach((name, index) => rowsToInsert.push({
+          workspace_id: workspace.id,
+          kind,
+          name,
+          sort_order: grouped[kind].length + index
+        }));
+        legacyKeysToRemove.push(legacyWorkspaceOptionKey(workspace.id, kind));
+      }
+    });
+    if (rowsToInsert.length) {
+      const { error: insertError } = await supabaseClient.from('workspace_options')
+        .upsert(rowsToInsert, { onConflict: 'workspace_id,kind,name', ignoreDuplicates: true });
+      if (insertError) throw insertError;
+      if (generation !== workspaceLoadGeneration || userId !== activeWorkspaceUserId) return;
+    }
+    const { data: finalRows, error: finalError } = await supabaseClient.from('workspace_options')
+      .select('workspace_id, kind, name, sort_order')
+      .in('workspace_id', ids)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (finalError) throw finalError;
+    if (generation !== workspaceLoadGeneration || userId !== activeWorkspaceUserId) return;
+    const finalByWorkspace = new Map(ids.map((id) => [id, { setup: [], poi: [] }]));
+    (finalRows || []).forEach((row) => {
+      const options = finalByWorkspace.get(row.workspace_id);
+      if (options && options[row.kind] && !options[row.kind].includes(row.name)) options[row.kind].push(row.name);
+    });
+    targetWorkspaces.forEach((workspace) => {
+      const options = finalByWorkspace.get(workspace.id);
+      workspace.setups = options.setup;
+      workspace.pois = options.poi;
+    });
+    legacyKeysToRemove.forEach((key) => { try { localStorage.removeItem(key); } catch { /* Supabase is the source of truth. */ } });
+  }
+  async function saveWorkspaceOption(kind, name, previousName = '') {
+    const names = kind === 'setup' ? setups : pois;
+    const payload = {
+      workspace_id: activeWorkspaceId,
+      kind,
+      name,
+      sort_order: previousName ? Math.max(0, names.indexOf(previousName)) : names.length
+    };
+    const query = previousName
+      ? supabaseClient.from('workspace_options').update({ name }).eq('workspace_id', activeWorkspaceId).eq('kind', kind).eq('name', previousName)
+      : supabaseClient.from('workspace_options').insert(payload);
+    const { data, error } = await query.select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('ไม่พบตัวเลือก หรือไม่มีสิทธิ์แก้ไข');
+  }
+  async function deleteWorkspaceOption(kind, name) {
+    const { data, error } = await supabaseClient.from('workspace_options').delete()
+      .eq('workspace_id', activeWorkspaceId).eq('kind', kind).eq('name', name)
+      .select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('ไม่พบตัวเลือก หรือไม่มีสิทธิ์ลบ');
+  }
   async function saveActiveWorkspaceSettings() {
     const active = activeWorkspace();
     if (!supabaseClient || !active) throw new Error('ไม่พบโปรเจกต์ที่กำลังใช้งาน');
@@ -405,6 +515,8 @@
     if (error) throw error;
     if (generation !== workspaceLoadGeneration || activeWorkspaceUserId !== user.id) return;
     workspaces = rows.map(workspaceFromRow);
+    await syncWorkspaceOptions(workspaces, generation, user.id);
+    if (generation !== workspaceLoadGeneration || activeWorkspaceUserId !== user.id) return;
     const { data: tradeRows, error: tradeError } = await supabaseClient.from('trades')
       .select('*')
       .order('trade_date', { ascending: false })
@@ -444,13 +556,14 @@
     return workspaces.length === 0;
   }
   async function handleAuthSession(session) {
+    updateAdminNavigation(session);
     const user = session?.user;
     if (!user) {
       workspaceLoadGeneration += 1;
       tradeFetchGeneration += 1;
       activeWorkspaceUserId = null;
       document.body.classList.add('auth-locked');
-      $('authStartup').hidden = true;
+      if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
       $('loginBackdrop').hidden = false;
       $('loginForm').hidden = false;
       $('loginStatus').textContent = 'เข้าสู่ระบบด้วย Email และ Password';
@@ -460,8 +573,8 @@
     if (activeWorkspaceUserId === user.id) return;
     activeWorkspaceUserId = user.id;
     const generation = ++workspaceLoadGeneration;
+    const loadingToken = beginLoadingOperation();
     document.body.classList.add('auth-locked');
-    $('authStartup').hidden = false;
     $('loginBackdrop').hidden = true;
     $('loginForm').hidden = true;
     $('loginStatus').textContent = 'กำลังโหลดโปรเจกต์จาก Supabase…';
@@ -471,7 +584,6 @@
       if (generation !== workspaceLoadGeneration || activeWorkspaceUserId !== user.id) return;
       $('signedInEmail').textContent = user.email || 'ผู้ใช้งาน';
       document.body.classList.remove('auth-locked');
-      $('authStartup').hidden = true;
       $('loginBackdrop').hidden = true;
       if (needsWorkspace) {
         switchView('projects');
@@ -480,14 +592,15 @@
     } catch (error) {
       if (generation !== workspaceLoadGeneration) return;
       activeWorkspaceUserId = null;
-      $('authStartup').hidden = true;
       $('loginBackdrop').hidden = false;
       $('loginForm').hidden = false;
       $('loginStatus').textContent = `โหลดโปรเจกต์ไม่สำเร็จ: ${error.message || 'ตรวจสอบตาราง workspaces และ RLS policy'}`;
       $('loginStatus').classList.add('login-status-ready');
+    } finally {
+      endLoadingOperation(loadingToken);
+      if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
     }
   }
-  function persistSetups() { persistWorkspaceState(); }
   if (!localStorage.getItem(WORKSPACES_STORAGE_KEY)) {
     try {
       localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces.map(({ id, name }) => ({ id, name }))));
@@ -520,6 +633,41 @@
       return `<article class="project-card${activeClass}"><div class="project-card-top"><span class="project-card-icon">▦</span><span class="project-status">${workspace.id === activeWorkspaceId ? 'กำลังใช้งาน' : 'พร้อมใช้งาน'}</span></div><h3>${escapeHtml(workspace.name)}</h3><div class="project-card-stats"><span><small>เทรด</small><strong>${stats.count}</strong></span><span><small>Setup</small><strong>${setupCount}</strong></span></div><div class="project-card-metrics"><span><small>Win rate</small><strong>${stats.count ? `${stats.winRate.toFixed(0)}%` : '—'}</strong></span><span><small>กำไร / ขาดทุน</small><strong class="${netClass}">${money(stats.net, 0)}</strong></span><span><small>แพ้ติดกัน</small><strong>${stats.maxLossStreak} ไม้</strong></span><span><small>Avg R</small><strong>${stats.avgR == null ? '—' : `${stats.avgR >= 0 ? '+' : ''}${stats.avgR.toFixed(2)}R`}</strong></span><span><small>Max RR</small><strong>${stats.maxRR == null ? '—' : `+${stats.maxRR.toFixed(2)}R`}</strong></span></div><div class="project-card-actions"><button type="button" class="primary-button" data-select-project="${escapeHtml(workspace.id)}">${workspace.id === activeWorkspaceId ? 'เปิดภาพรวม' : 'ใช้โปรเจกต์นี้'}</button>${workspaces.length > 1 ? `<button type="button" class="project-action-button danger" data-delete-workspace="${escapeHtml(workspace.id)}">ลบ</button>` : ''}</div></article>`;
     }).join('');
   }
+  function formatAccountTimestamp(value) {
+    if (!value) return 'ยังไม่เคย Login';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+  }
+  async function loadAccountUsers(page = accountUsersPage) {
+    if (!isAdminUser || !supabaseClient || accountUsersLoading) return;
+    accountUsersLoading = true;
+    const loadingToken = beginLoadingOperation();
+    accountUsersPage = Math.max(1, page);
+    $('accountsStatus').textContent = 'กำลังโหลดรายชื่อบัญชี…';
+    $('refreshAccounts').disabled = true;
+    $('previousAccountsPage').disabled = true;
+    $('nextAccountsPage').disabled = true;
+    try {
+      const { data, error } = await supabaseClient.functions.invoke('list-users', {
+        body: { page: accountUsersPage, perPage: ACCOUNT_USERS_PER_PAGE }
+      });
+      if (error) throw error;
+      const users = Array.isArray(data?.users) ? data.users : [];
+      $('accountsRows').innerHTML = users.length ? users.map((user) => `<tr><td><span class="account-email">${escapeHtml(user.email || 'ไม่มี Email')}</span><small class="account-user-id">${escapeHtml(user.id)}</small></td><td>${escapeHtml(formatAccountTimestamp(user.createdAt))}</td><td>${escapeHtml(formatAccountTimestamp(user.lastSignInAt))}</td></tr>`).join('') : '<tr><td colspan="3" class="account-empty-cell">ไม่พบบัญชีในหน้านี้</td></tr>';
+      $('accountsStatus').textContent = `${Number(data?.count ?? users.length)} บัญชีในหน้านี้`;
+      $('accountsPageLabel').textContent = `หน้า ${accountUsersPage}`;
+      $('previousAccountsPage').disabled = accountUsersPage <= 1;
+      $('nextAccountsPage').disabled = !data?.hasMore;
+    } catch (error) {
+      $('accountsRows').innerHTML = '<tr><td colspan="3" class="account-empty-cell">โหลดรายชื่อบัญชีไม่สำเร็จ</td></tr>';
+      $('accountsStatus').textContent = `โหลดรายชื่อบัญชีไม่สำเร็จ: ${error.message || 'ตรวจสอบการ Deploy Edge Function list-users'}`;
+    } finally {
+      accountUsersLoading = false;
+      $('refreshAccounts').disabled = false;
+      endLoadingOperation(loadingToken);
+    }
+  }
   function switchWorkspace(id) {
     if (demoMode && demoPortfolioMode) { switchDemoWorkspace(id); return; }
     if (!workspaces.some((workspace) => workspace.id === id)) return;
@@ -544,6 +692,7 @@
     $('periodFilter').value = 'all';
     $('instrumentFilter').value = 'all';
     renderSetupOptions();
+    renderPoiOptions();
     renderSetupManager();
     renderWorkspaceControls();
     render();
@@ -575,12 +724,14 @@
       const { data, error } = await supabaseClient.from('workspaces').insert({ name }).select('*').single();
       if (error) throw error;
       const workspace = workspaceFromRow(data);
-      workspaces.push(workspace);
-      try { persistWorkspaceState(); }
-      catch {
-        workspaces.pop();
+      try {
+        await syncWorkspaceOptions([workspace]);
+        workspaces.push(workspace);
+        persistWorkspaceState();
+      } catch (setupError) {
+        workspaces = workspaces.filter((item) => item.id !== workspace.id);
         await supabaseClient.from('workspaces').delete().eq('id', workspace.id);
-        throw new Error('พื้นที่จัดเก็บการตั้งค่าในเบราว์เซอร์ไม่พร้อมใช้งาน');
+        throw new Error(`สร้างตัวเลือก Setup/POI ใน Supabase ไม่สำเร็จ: ${setupError.message}`);
       }
       $('workspaceName').value = '';
       switchWorkspace(workspace.id);
@@ -605,13 +756,16 @@
       const nextName = window.prompt('ตั้งชื่อโปรเจกต์', workspace.name)?.trim();
       if (!nextName || nextName === workspace.name) return;
       if (workspaces.some((item) => item.id !== renameId && item.name.toLocaleLowerCase() === nextName.toLocaleLowerCase())) { toast('มีชื่อโปรเจกต์นี้แล้ว'); return; }
-      const { data, error } = await supabaseClient.from('workspaces').update({ name: nextName }).eq('id', renameId).select('*').maybeSingle();
-      if (error || !data) { toast(`เปลี่ยนชื่อไม่สำเร็จ: ${error?.message || 'ไม่พบ workspace หรือไม่มีสิทธิ์'}`); return; }
-      workspace.name = data.name;
-      try { persistWorkspaceState(); }
-      catch { toast('เปลี่ยนชื่อใน Supabase แล้ว แต่บันทึกแคชในเบราว์เซอร์ไม่สำเร็จ'); }
-      renderWorkspaceControls();
-      toast('เปลี่ยนชื่อโปรเจกต์แล้ว');
+      const loadingToken = beginLoadingOperation();
+      try {
+        const { data, error } = await supabaseClient.from('workspaces').update({ name: nextName }).eq('id', renameId).select('*').maybeSingle();
+        if (error || !data) { toast(`เปลี่ยนชื่อไม่สำเร็จ: ${error?.message || 'ไม่พบ workspace หรือไม่มีสิทธิ์'}`); return; }
+        workspace.name = data.name;
+        try { persistWorkspaceState(); }
+        catch { toast('เปลี่ยนชื่อใน Supabase แล้ว แต่บันทึกแคชในเบราว์เซอร์ไม่สำเร็จ'); }
+        renderWorkspaceControls();
+        toast('เปลี่ยนชื่อโปรเจกต์แล้ว');
+      } finally { endLoadingOperation(loadingToken); }
       return;
     }
     if (deleteId) {
@@ -622,7 +776,7 @@
       const confirmed = await openConfirmModal({
         title: 'ลบโปรเจกต์นี้หรือไม่?',
         message: `โปรเจกต์ “${workspace.name}” มีรายการเทรด ${workspaceTradeCount} รายการ`,
-        detail: 'รายการเทรดและ Setup ทั้งหมดจะถูกลบ และการลบนี้ย้อนกลับไม่ได้',
+        detail: 'รายการเทรด Setup และ POI ทั้งหมดจะถูกลบ และการลบนี้ย้อนกลับไม่ได้',
         confirmLabel: 'ลบโปรเจกต์'
       });
       if (!confirmed) return;
@@ -640,10 +794,9 @@
         }
         try { persistWorkspaceState(); }
         catch { toast('ลบโปรเจกต์จาก Supabase แล้ว แต่แคชการตั้งค่าในเบราว์เซอร์บันทึกไม่สำเร็จ'); }
-        localStorage.removeItem(projectDataKey(deleteId, 'setups'));
-        localStorage.removeItem(projectDataKey(deleteId, 'pois'));
         localStorage.removeItem(projectDataKey(deleteId, 'settings'));
         renderSetupOptions();
+        renderPoiOptions();
         renderWorkspaceControls();
         render();
         toast('ลบโปรเจกต์แล้ว');
@@ -804,27 +957,33 @@
     if (!nextName) return;
     const duplicate = setups.some((name) => name.toLocaleLowerCase() === nextName.toLocaleLowerCase() && name !== editingSetupName);
     if (duplicate) { toast('มีชื่อ Setup นี้อยู่แล้ว'); return; }
-    if (editingSetupName) {
-      const oldName = editingSetupName;
-      const { error } = await supabaseClient.from('trades').update({ setup: nextName })
-        .eq('workspace_id', activeWorkspaceId).eq('setup', oldName);
-      if (error) { toast(`เปลี่ยนชื่อ Setup ในรายการเทรดไม่สำเร็จ: ${error.message}`); return; }
-      setups = setups.map((name) => name === oldName ? nextName : name);
-      setActiveTrades(trades.map((trade) => trade.setup === oldName ? { ...trade, setup: nextName } : trade));
-      const changedDefault = settings.defaultSetup === oldName;
-      if (changedDefault) settings.defaultSetup = nextName;
-      if (changedDefault) saveActiveWorkspaceSettings().catch((error) => toast(`บันทึกค่า Setup ใน Supabase ไม่สำเร็จ: ${error.message}`));
-      toast('เปลี่ยนชื่อ Setup แล้ว');
-    } else {
-      setups.push(nextName);
-      toast('เพิ่ม Setup แล้ว');
-    }
-    persistSetups();
-    renderSetupManager();
-    renderSetupOptions(nextName);
-    render();
-    resetSetupEditor();
-    $('setupName').focus();
+    const oldName = editingSetupName;
+    const loadingToken = beginLoadingOperation();
+    try {
+      await saveWorkspaceOption('setup', nextName, oldName || '');
+      setups = oldName ? setups.map((name) => name === oldName ? nextName : name) : [...setups, nextName];
+      activeWorkspace().setups = setups;
+      if (oldName) {
+        const { error } = await supabaseClient.from('trades').update({ setup: nextName })
+          .eq('workspace_id', activeWorkspaceId).eq('setup', oldName);
+        if (error) toast(`เปลี่ยนชื่อ Setup แล้ว แต่ชื่อในรายการเทรดบางรายการอาจยังไม่เปลี่ยน: ${error.message}`);
+        else setActiveTrades(trades.map((trade) => trade.setup === oldName ? { ...trade, setup: nextName } : trade));
+        if (settings.defaultSetup === oldName) {
+          const oldDefault = settings.defaultSetup;
+          settings.defaultSetup = nextName;
+          try { await saveActiveWorkspaceSettings(); }
+          catch (error) { settings.defaultSetup = oldDefault; toast(`เปลี่ยนชื่อ Setup แล้ว แต่บันทึกค่า default ไม่สำเร็จ: ${error.message}`); }
+        }
+      }
+      renderSetupManager();
+      renderSetupOptions(nextName);
+      render();
+      resetSetupEditor();
+      $('setupName').focus();
+      toast(oldName ? 'เปลี่ยนชื่อ Setup แล้ว' : 'เพิ่ม Setup แล้ว');
+    } catch (error) {
+      toast(`บันทึก Setup ใน Supabase ไม่สำเร็จ: ${error.message}`);
+    } finally { endLoadingOperation(loadingToken); }
   }
   function resetPoiEditor() {
     editingPoiName = null;
@@ -840,27 +999,33 @@
     if (!nextName) return;
     const duplicate = pois.some((name) => name.toLocaleLowerCase() === nextName.toLocaleLowerCase() && name !== editingPoiName);
     if (duplicate) { toast('มีชื่อ POI นี้อยู่แล้ว'); return; }
-    if (editingPoiName) {
-      const oldName = editingPoiName;
-      const { error } = await supabaseClient.from('trades').update({ poi: nextName })
-        .eq('workspace_id', activeWorkspaceId).eq('poi', oldName);
-      if (error) { toast(`เปลี่ยนชื่อ POI ในรายการเทรดไม่สำเร็จ: ${error.message}`); return; }
-      pois = pois.map((name) => name === oldName ? nextName : name);
-      setActiveTrades(trades.map((trade) => trade.poi === oldName ? { ...trade, poi: nextName } : trade));
-      const changedDefault = settings.defaultPoi === oldName;
-      if (changedDefault) settings.defaultPoi = nextName;
-      toast('เปลี่ยนชื่อ POI แล้ว');
-      if (changedDefault) saveActiveWorkspaceSettings().catch((error) => toast(`บันทึกค่า POI ใน Supabase ไม่สำเร็จ: ${error.message}`));
-    } else {
-      pois.push(nextName);
-      toast('เพิ่ม POI แล้ว');
-    }
-    persistWorkspaceState();
-    renderSetupManager();
-    renderPoiOptions(nextName);
-    render();
-    resetPoiEditor();
-    $('poiName').focus();
+    const oldName = editingPoiName;
+    const loadingToken = beginLoadingOperation();
+    try {
+      await saveWorkspaceOption('poi', nextName, oldName || '');
+      pois = oldName ? pois.map((name) => name === oldName ? nextName : name) : [...pois, nextName];
+      activeWorkspace().pois = pois;
+      if (oldName) {
+        const { error } = await supabaseClient.from('trades').update({ poi: nextName })
+          .eq('workspace_id', activeWorkspaceId).eq('poi', oldName);
+        if (error) toast(`เปลี่ยนชื่อ POI แล้ว แต่ชื่อในรายการเทรดบางรายการอาจยังไม่เปลี่ยน: ${error.message}`);
+        else setActiveTrades(trades.map((trade) => trade.poi === oldName ? { ...trade, poi: nextName } : trade));
+        if (settings.defaultPoi === oldName) {
+          const oldDefault = settings.defaultPoi;
+          settings.defaultPoi = nextName;
+          try { await saveActiveWorkspaceSettings(); }
+          catch (error) { settings.defaultPoi = oldDefault; toast(`เปลี่ยนชื่อ POI แล้ว แต่บันทึกค่า default ไม่สำเร็จ: ${error.message}`); }
+        }
+      }
+      renderSetupManager();
+      renderPoiOptions(nextName);
+      render();
+      resetPoiEditor();
+      $('poiName').focus();
+      toast(oldName ? 'เปลี่ยนชื่อ POI แล้ว' : 'เพิ่ม POI แล้ว');
+    } catch (error) {
+      toast(`บันทึก POI ใน Supabase ไม่สำเร็จ: ${error.message}`);
+    } finally { endLoadingOperation(loadingToken); }
   }
   async function saveSettings(event) {
     event.preventDefault();
@@ -878,8 +1043,10 @@
     };
     const previousSettings = settings;
     settings = nextSettings;
+    const loadingToken = beginLoadingOperation();
     try { await saveActiveWorkspaceSettings(); }
     catch (error) { settings = previousSettings; toast(`บันทึกค่าเริ่มต้นใน Supabase ไม่สำเร็จ: ${error.message}`); return; }
+    finally { endLoadingOperation(loadingToken); }
     persistWorkspaceState();
     renderDefaultSettings();
     toast('บันทึกค่าเริ่มต้นแล้ว');
@@ -888,8 +1055,10 @@
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนจึงล้างค่าเริ่มต้นได้'); return; }
     const previousSettings = settings;
     settings = normalizeSettings();
+    const loadingToken = beginLoadingOperation();
     try { await saveActiveWorkspaceSettings(); }
     catch (error) { settings = previousSettings; toast(`ล้างค่าเริ่มต้นใน Supabase ไม่สำเร็จ: ${error.message}`); return; }
+    finally { endLoadingOperation(loadingToken); }
     persistWorkspaceState();
     renderDefaultSettings();
     toast('ล้างค่าเริ่มต้นแล้ว');
@@ -1137,7 +1306,7 @@
     $('session').value = trade?.session || '';
     $('quantity').value = trade?.quantity ?? (trade?.instrument === 'XAUUSD' || !trade ? 0.01 : 1);
     $('riskBudget').value = trade?.riskBudget ?? (recordType === 'missed' ? '' : settings.defaultRisk);
-    $('riskSizingFeedback').textContent = 'ใส่ Risk, Entry และ SL เพื่อคำนวณจำนวนอัตโนมัติ · ค่าธรรมเนียมและ slippage ยังไม่รวม';
+    $('riskSizingFeedback').textContent = 'ใส่ Risk, Entry และ SL แล้วกดคำนวณหรือออกจากช่อง Risk · ค่าธรรมเนียมและ slippage ยังไม่รวม';
     $('riskSizingFeedback').classList.remove('error', 'calculated');
     $('entryPrice').value = trade?.entry ?? '';
     $('exitPrice').value = trade?.exit ?? '';
@@ -1297,7 +1466,7 @@
   function markRiskSizingStale() {
     const feedback = $('riskSizingFeedback');
     if (feedback.classList.contains('calculated')) {
-      feedback.textContent = 'ค่า Entry, SL, Risk หรือสินทรัพย์เปลี่ยนแล้ว — ออกจากช่อง Risk เพื่อคำนวณจำนวนใหม่';
+      feedback.textContent = 'ค่า Entry, SL, Risk หรือสินทรัพย์เปลี่ยนแล้ว — กดคำนวณหรือออกจากช่อง Risk อีกครั้ง';
       feedback.classList.remove('calculated');
     }
     feedback.classList.remove('error');
@@ -1373,7 +1542,7 @@
   }
   function backupJson() {
     if (demoMode) { toast('ออกจากโหมดสาธิตก่อนสำรองข้อมูลจริง'); return; }
-    const backupWorkspaces = workspaces.map(({ id, name }) => ({ id, name, trades: loadWorkspaceTrades(id), setups: loadWorkspaceSetups(id) }));
+    const backupWorkspaces = workspaces.map(({ id, name }) => ({ id, name, trades: loadWorkspaceTrades(id), setups: loadWorkspaceSetups(id), pois: loadWorkspacePois(id) }));
     download(`redline-backup-${localDate()}.json`, JSON.stringify({ app: 'Redline Trading Journal', version: 2, exportedAt: new Date().toISOString(), activeWorkspaceId, workspaces: backupWorkspaces }, null, 2), 'application/json');
     toast('ดาวน์โหลดไฟล์สำรองแล้ว');
   }
@@ -1516,6 +1685,7 @@
     submitButton.disabled = true;
     const originalLabel = submitButton.innerHTML;
     submitButton.textContent = 'กำลังบันทึก…';
+    const loadingToken = beginLoadingOperation();
     try {
       const [savedTrade] = await saveTradeRows([trade]);
       if (!savedTrade) throw new Error('Supabase ไม่ส่งข้อมูลรายการที่บันทึกกลับมา');
@@ -1529,6 +1699,7 @@
     } finally {
       submitButton.disabled = false;
       submitButton.innerHTML = originalLabel;
+      endLoadingOperation(loadingToken);
     }
     render();
     closeModal();
@@ -1558,6 +1729,13 @@
     if (event.target.closest('[data-rename-workspace], [data-delete-workspace]')) await manageWorkspaceAction(event);
   });
   $('workspaceManager').addEventListener('click', (event) => { if (event.target === $('workspaceManager')) closeWorkspaceManager(); });
+  $('refreshAccounts').addEventListener('click', () => { void loadAccountUsers(accountUsersPage); });
+  $('previousAccountsPage').addEventListener('click', () => { if (accountUsersPage > 1) void loadAccountUsers(accountUsersPage - 1); });
+  $('nextAccountsPage').addEventListener('click', () => { void loadAccountUsers(accountUsersPage + 1); });
+  $('refreshOverview').addEventListener('click', () => {
+    if (demoMode) { toast('ออกจากโหมดสาธิตก่อนจึงรีเฟรชข้อมูลจริงได้'); return; }
+    void refreshActiveTrades(activeWorkspaceId);
+  });
   $('periodFilter').addEventListener('change', render);
   $('instrumentFilter').addEventListener('change', render);
   $('recordTypeFilter').addEventListener('change', render);
@@ -1569,6 +1747,8 @@
     if (event.target.matches('input, select, textarea') && event.target.value.trim()) clearTradeFieldError(event.target);
   }));
   $('instrument').addEventListener('change', () => { updateInstrumentField(); markRiskSizingStale(); });
+  $('calculateRiskButton').addEventListener('mousedown', (event) => event.preventDefault());
+  $('calculateRiskButton').addEventListener('click', calculateContractsFromRisk);
   $('riskBudget').addEventListener('blur', () => {
     if ($('riskBudget').value.trim()) calculateContractsFromRisk();
   });
@@ -1656,6 +1836,7 @@
       $('cancelSetupEdit').hidden = false;
       $('setupName').focus();
     }
+    if (deleteName && setups.length <= 1) { toast('ต้องเหลือ Setup อย่างน้อย 1 รายการ'); return; }
     if (deleteName && await openConfirmModal({
       title: 'ลบ Setup นี้หรือไม่?',
       message: `ลบ “${deleteName}” ออกจากตัวเลือกใช่หรือไม่?`,
@@ -1663,14 +1844,23 @@
       confirmLabel: 'ลบ Setup'
     })) {
       if (editingSetupName === deleteName) resetSetupEditor();
-      setups = setups.filter((name) => name !== deleteName);
-      const changedDefault = settings.defaultSetup === deleteName;
-      if (changedDefault) settings.defaultSetup = '';
-      persistSetups();
-      if (changedDefault) saveActiveWorkspaceSettings().catch((error) => toast(`บันทึกค่า Setup ใน Supabase ไม่สำเร็จ: ${error.message}`));
-      renderSetupManager();
-      renderSetupOptions($('setup').value === deleteName ? '' : $('setup').value);
-      toast('ลบ Setup จากตัวเลือกแล้ว');
+      const loadingToken = beginLoadingOperation();
+      try {
+        await deleteWorkspaceOption('setup', deleteName);
+        setups = setups.filter((name) => name !== deleteName);
+        activeWorkspace().setups = setups;
+        const changedDefault = settings.defaultSetup === deleteName;
+        if (changedDefault) {
+          settings.defaultSetup = '';
+          try { await saveActiveWorkspaceSettings(); }
+          catch (error) { toast(`ลบ Setup แล้ว แต่ล้างค่า default ไม่สำเร็จ: ${error.message}`); }
+        }
+        renderSetupManager();
+        renderSetupOptions($('setup').value === deleteName ? '' : $('setup').value);
+        render();
+        toast('ลบ Setup จากตัวเลือกแล้ว');
+      } catch (error) { toast(`ลบ Setup จาก Supabase ไม่สำเร็จ: ${error.message}`); }
+      finally { endLoadingOperation(loadingToken); }
     }
   });
   $('poiRows').addEventListener('click', async (event) => {
@@ -1684,6 +1874,7 @@
       $('cancelPoiEdit').hidden = false;
       $('poiName').focus();
     }
+    if (deleteName && pois.length <= 1) { toast('ต้องเหลือ POI อย่างน้อย 1 รายการ'); return; }
     if (deleteName && await openConfirmModal({
       title: 'ลบ POI นี้หรือไม่?',
       message: `ลบ “${deleteName}” ออกจากตัวเลือกใช่หรือไม่?`,
@@ -1691,14 +1882,23 @@
       confirmLabel: 'ลบ POI'
     })) {
       if (editingPoiName === deleteName) resetPoiEditor();
-      pois = pois.filter((name) => name !== deleteName);
-      const changedDefault = settings.defaultPoi === deleteName;
-      if (changedDefault) settings.defaultPoi = '';
-      persistWorkspaceState();
-      if (changedDefault) saveActiveWorkspaceSettings().catch((error) => toast(`บันทึกค่า POI ใน Supabase ไม่สำเร็จ: ${error.message}`));
-      renderSetupManager();
-      renderPoiOptions($('poi').value === deleteName ? '' : $('poi').value);
-      toast('ลบ POI จากตัวเลือกแล้ว');
+      const loadingToken = beginLoadingOperation();
+      try {
+        await deleteWorkspaceOption('poi', deleteName);
+        pois = pois.filter((name) => name !== deleteName);
+        activeWorkspace().pois = pois;
+        const changedDefault = settings.defaultPoi === deleteName;
+        if (changedDefault) {
+          settings.defaultPoi = '';
+          try { await saveActiveWorkspaceSettings(); }
+          catch (error) { toast(`ลบ POI แล้ว แต่ล้างค่า default ไม่สำเร็จ: ${error.message}`); }
+        }
+        renderSetupManager();
+        renderPoiOptions($('poi').value === deleteName ? '' : $('poi').value);
+        render();
+        toast('ลบ POI จากตัวเลือกแล้ว');
+      } catch (error) { toast(`ลบ POI จาก Supabase ไม่สำเร็จ: ${error.message}`); }
+      finally { endLoadingOperation(loadingToken); }
     }
   });
   $('pnlPreview').addEventListener('click', (event) => {
@@ -1727,11 +1927,13 @@
     submitButton.disabled = true;
     $('loginStatus').textContent = 'กำลังเข้าสู่ระบบ…';
     $('loginStatus').classList.remove('login-status-ready');
+    const loadingToken = beginLoadingOperation();
     supabaseClient.auth.signInWithPassword({
       email: $('loginEmail').value.trim(),
       password: $('loginPassword').value
     }).then(({ error }) => {
       submitButton.disabled = false;
+      endLoadingOperation(loadingToken);
       if (!error) return;
       $('loginStatus').textContent = error.message === 'Invalid login credentials'
         ? 'Email หรือ Password ไม่ถูกต้อง'
@@ -1741,20 +1943,24 @@
       $('loginStatus').classList.add('login-status-ready');
     }).catch(() => {
       submitButton.disabled = false;
+      endLoadingOperation(loadingToken);
       $('loginStatus').textContent = 'เชื่อมต่อ Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
       $('loginStatus').classList.add('login-status-ready');
     });
   });
   $('signOutButton').addEventListener('click', () => {
-    if (supabaseClient) supabaseClient.auth.signOut().then(({ error }) => {
-      if (error) toast(`ออกจากระบบไม่สำเร็จ: ${error.message}`);
-    });
+    if (supabaseClient) {
+      const loadingToken = beginLoadingOperation();
+      supabaseClient.auth.signOut().then(({ error }) => {
+        if (error) toast(`ออกจากระบบไม่สำเร็จ: ${error.message}`);
+      }).finally(() => endLoadingOperation(loadingToken));
+    }
   });
   if (supabaseClient) {
     supabaseClient.auth.onAuthStateChange((_event, session) => { void handleAuthSession(session); });
     supabaseClient.auth.getSession().then(({ data, error }) => {
       if (error) {
-        $('authStartup').hidden = true;
+        if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
         $('loginBackdrop').hidden = false;
         $('loginForm').hidden = false;
         $('loginStatus').textContent = `ตรวจสอบ session ไม่สำเร็จ: ${error.message}`;
@@ -1763,14 +1969,14 @@
       }
       void handleAuthSession(data.session);
     }).catch(() => {
-      $('authStartup').hidden = true;
+      if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
       $('loginBackdrop').hidden = false;
       $('loginForm').hidden = false;
       $('loginStatus').textContent = 'เชื่อมต่อ Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
       $('loginStatus').classList.add('login-status-ready');
     });
   } else {
-    $('authStartup').hidden = true;
+    if (startupLoadingToken) { endLoadingOperation(startupLoadingToken); startupLoadingToken = null; }
     $('loginBackdrop').hidden = false;
     $('loginForm').hidden = false;
     $('loginStatus').textContent = 'โหลด Supabase ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
@@ -1782,9 +1988,10 @@
   }
   function switchView(view, { updateHash = true } = {}) {
     const wasTradesView = !$('tradesView').hidden;
+    if (view === 'accounts' && !isAdminUser) view = 'overview';
     if (!workspaces.length && view !== 'projects') view = 'projects';
-    const views = { overview: 'overviewView', projects: 'projectsView', trades: 'tradesView', setups: 'setupsView' };
-    const labels = { overview: 'ภาพรวม', projects: 'โปรเจกต์', trades: 'รายการเทรด', setups: 'ตั้งค่า' };
+    const views = { overview: 'overviewView', projects: 'projectsView', trades: 'tradesView', setups: 'setupsView', accounts: 'accountsView' };
+    const labels = { overview: 'ภาพรวม', projects: 'โปรเจกต์', trades: 'รายการเทรด', setups: 'ตั้งค่า', accounts: 'Account' };
     if (!views[view]) view = 'overview';
     Object.entries(views).forEach(([key, id]) => { $(id).hidden = key !== view; });
     document.querySelectorAll('.nav-item[data-view]').forEach((link) => link.classList.toggle('active', link.dataset.view === view));
@@ -1793,6 +2000,7 @@
     updateDeleteSelectedButton();
     if (view === 'projects') renderProjectsView();
     if (view === 'setups') renderSetupManager();
+    if (view === 'accounts') void loadAccountUsers(accountUsersPage);
     if (view === 'trades' && !wasTradesView && !demoMode) void refreshActiveTrades(activeWorkspaceId);
   }
   function navigateFromHash() {
